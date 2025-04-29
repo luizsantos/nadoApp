@@ -184,12 +184,13 @@ def update_meet_details(conn, meet_id, name, city, course, start_date, hostclub)
         conn.rollback()
         return False # Indica falha
     
+# MODIFICADA para incluir result_id_lenex
 def fetch_results_for_meet_summary(conn, meet_id):
     """Busca resultados CM para um meet específico, incluindo dados para lookup."""
     cursor = conn.cursor()
     query = """
         SELECT
-            r.result_id_lenex,
+            r.result_id_lenex, -- <<< ADICIONADO
             am.first_name || ' ' || am.last_name AS Atleta,
             SUBSTR(am.birthdate, 1, 4) AS AnoNasc,
             e.prova_desc AS Prova,
@@ -216,17 +217,32 @@ def fetch_results_for_meet_summary(conn, meet_id):
 
 def fetch_top3_for_meet(conn, meet_id):
     """Busca todos os resultados Top3 para um meet específico."""
+    # ... (sem alterações) ...
     cursor = conn.cursor()
+    query = "SELECT event_db_id, agegroup_db_id, place, swim_time FROM Top3Result WHERE meet_id = ?"
+    try:
+        cursor.execute(query, (meet_id,)); return cursor.fetchall()
+    except sqlite3.Error as e: print(f"Erro ao buscar Top3 para meet {meet_id}: {e}"); return []
+
+
+# --- NOVA FUNÇÃO para buscar parciais ---
+def fetch_splits_for_meet(conn, meet_id):
+    """Busca todas as parciais (SplitCM) para um determinado meet_id."""
+    cursor = conn.cursor()
+    # Junta com ResultCM apenas para filtrar pelo meet_id
     query = """
-        SELECT event_db_id, agegroup_db_id, place, swim_time
-        FROM Top3Result
-        WHERE meet_id = ?
+        SELECT s.result_id_lenex, s.distance, s.swim_time
+        FROM SplitCM s
+        JOIN ResultCM r ON s.result_id_lenex = r.result_id_lenex
+        WHERE r.meet_id = ?
+        ORDER BY s.result_id_lenex, s.distance;
     """
     try:
         cursor.execute(query, (meet_id,))
-        # Retorna como lista de tuplas para processamento posterior
+        # Retorna (result_id, distance, time_str)
         return cursor.fetchall()
     except sqlite3.Error as e:
-        print(f"Erro ao buscar Top3 para meet {meet_id}: {e}")
+        print(f"Erro ao buscar parciais para meet {meet_id}: {e}")
         return []
+
 
