@@ -11,8 +11,8 @@ from PySide6.QtGui import QFont
 import sqlite3
 from collections import defaultdict, Counter
 import re
-import statistics # <<< Importar statistics
-import math     # <<< Importar math (para isnan)
+import statistics # Importar statistics
+import math     # Importar math (para isnan)
 
 # Imports do ReportLab
 try:
@@ -23,11 +23,9 @@ try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
     REPORTLAB_AVAILABLE = True
-# --- CORREÇÃO AQUI ---
 except ImportError:
     REPORTLAB_AVAILABLE = False
-    # Definir classes dummy se reportlab não estiver instalado para evitar erros na UI
-    # Cada classe/função dummy em sua própria linha:
+    # Definir classes dummy se reportlab não estiver instalado
     class SimpleDocTemplate: pass
     class Paragraph: pass
     class Spacer: pass
@@ -39,19 +37,20 @@ except ImportError:
     inch = 72; cm = inch / 2.54
     A4 = (0,0)
     colors = None
-# Adiciona o diretório pai (sem alterações)
+
+# Adiciona o diretório pai
 script_dir = os.path.dirname(os.path.abspath(__file__)); parent_dir = os.path.dirname(script_dir)
 if parent_dir not in sys.path: sys.path.append(parent_dir)
 
-# Importa funções do core.database (adiciona a nova)
+# Importa funções do core.database
 from core.database import (get_db_connection, fetch_all_meets_for_edit,
                            fetch_results_for_meet_summary, fetch_top3_for_meet,
-                           fetch_splits_for_meet) # <<< Adicionada nova função
+                           fetch_splits_for_meet)
 
-# Constante SELECT_PROMPT (sem alterações)
+# Constante SELECT_PROMPT
 SELECT_PROMPT = "--- Selecione uma Competição ---"
 
-# Funções auxiliares time_to_seconds e format_time_diff (sem alterações)
+# Funções auxiliares time_to_seconds e format_time_diff
 def time_to_seconds(time_str):
     if not time_str: return None; time_str = time_str.strip()
     match_hr = re.match(r'(\d{1,2}):(\d{2}):(\d{2})\.(\d{1,2})$', time_str)
@@ -73,9 +72,6 @@ def format_time_diff(diff_seconds):
 
 
 class MeetSummaryTab(QWidget):
-    # __init__, _populate_meet_combo, _on_meet_selected, _clear_summary, refresh_data
-    # (sem alterações no código interno)
-
     def __init__(self, db_path, parent=None):
         super().__init__(parent)
         self.db_path = db_path; self.current_meet_id = None; self.last_summary_data = None; self.last_meet_name = ""
@@ -125,21 +121,21 @@ class MeetSummaryTab(QWidget):
         self.btn_export_pdf.setEnabled(REPORTLAB_AVAILABLE)
 
     def _generate_and_display_summary(self):
-        """Busca dados, processa (incluindo média/DP parciais, status na colocação) e exibe o resumo."""
+        """Busca dados, processa (incluindo média/DP por VOLTA CORRETA, status na colocação) e exibe o resumo."""
         if self.current_meet_id is None: return
         self.last_summary_data = None; conn = None
         try:
             conn = get_db_connection(self.db_path)
             if not conn: QMessageBox.critical(self, "Erro DB", f"Não foi possível conectar: {self.db_path}"); return
 
-            # 1. Buscar dados (sem alterações)
+            # 1. Buscar dados
             headers, results_data = fetch_results_for_meet_summary(conn, self.current_meet_id)
             top3_raw_data = fetch_top3_for_meet(conn, self.current_meet_id)
             splits_raw_data = fetch_splits_for_meet(conn, self.current_meet_id)
 
             if not headers: self._clear_summary(); return
 
-            # Encontrar índices (sem alterações)
+            # Encontrar índices
             try:
                 result_id_idx = headers.index('result_id_lenex'); athlete_idx = headers.index('Atleta'); birth_idx = headers.index('AnoNasc'); event_idx = headers.index('Prova'); place_idx = headers.index('Colocacao'); time_idx = headers.index('Tempo'); status_idx = headers.index('Status'); event_db_id_idx = headers.index('event_db_id'); agegroup_db_id_idx = headers.index('agegroup_db_id')
             except ValueError as e: QMessageBox.critical(self, "Erro Interno", f"Coluna não encontrada: {e}"); self._clear_summary(); return
@@ -149,10 +145,10 @@ class MeetSummaryTab(QWidget):
             athletes_per_event = Counter(); medals_per_event = defaultdict(lambda: defaultdict(int))
             athlete_table_data = []; top3_lookup = defaultdict(dict)
 
-            # Construir lookup do Top3 (sem alterações)
+            # Construir lookup do Top3
             for t3_event, t3_ag, t3_place, t3_time in top3_raw_data: top3_lookup[(t3_event, t3_ag)][t3_place] = t3_time
 
-            # Processar Parciais (sem alterações)
+            # Processar Parciais (tempos acumulados em segundos)
             splits_lookup = defaultdict(list)
             for split_res_id, _, split_time_str in splits_raw_data:
                 split_sec = time_to_seconds(split_time_str)
@@ -162,18 +158,12 @@ class MeetSummaryTab(QWidget):
             for row_idx, row in enumerate(results_data):
                 result_id = row[result_id_idx]; place = row[place_idx]; status = row[status_idx]; event_desc = row[event_idx]; event_db_id = row[event_db_id_idx]; ag_db_id = row[agegroup_db_id_idx]; athlete_time_str = row[time_idx]; athlete_name = row[athlete_idx]
 
-                # --- MODIFICAÇÃO: Determinar valor da Colocação/Status ---
-                display_colocacao = "N/A" # Valor padrão
-                is_valid_result = status is None or status.upper() == 'OK' or status.upper() == 'OFFICIAL'
+                # Determinar valor da Colocação/Status
+                display_colocacao = "N/A"; is_valid_result = status is None or status.upper() == 'OK' or status.upper() == 'OFFICIAL'
+                if not is_valid_result and status: display_colocacao = status.upper()
+                elif place is not None: display_colocacao = str(place)
 
-                if not is_valid_result and status: # Se status não é válido E existe
-                    display_colocacao = status.upper() # Usa o status (DSQ, DNS, etc.)
-                elif place is not None: # Se o resultado é válido e tem colocação
-                    display_colocacao = str(place)
-                # Se for válido mas não tiver place (raro), fica "N/A"
-                # --- FIM DA MODIFICAÇÃO ---
-
-                # Contagens (usar is_valid_result)
+                # Contagens
                 if is_valid_result:
                     if place == 1: gold_count += 1
                     elif place == 2: silver_count += 1
@@ -181,7 +171,7 @@ class MeetSummaryTab(QWidget):
                 if event_desc: athletes_per_event[event_desc] += 1
                 if is_valid_result and event_desc and place in [1, 2, 3]: medals_per_event[event_desc][place] += 1
 
-                # Lookup Top3 e cálculo de diferenças (sem alterações)
+                # Lookup Top3 e cálculo de diferenças
                 top3_times_for_event = top3_lookup.get((event_db_id, ag_db_id), {}); top1_time_str = top3_times_for_event.get(1); top2_time_str = top3_times_for_event.get(2); top3_time_str = top3_times_for_event.get(3)
                 athlete_secs = time_to_seconds(athlete_time_str); diff1_str = "N/A"; diff2_str = "N/A"; diff3_str = "N/A"
                 if athlete_secs is not None:
@@ -190,37 +180,93 @@ class MeetSummaryTab(QWidget):
                     if top2_secs is not None: diff2_str = format_time_diff(athlete_secs - top2_secs)
                     if top3_secs is not None: diff3_str = format_time_diff(athlete_secs - top3_secs)
 
-                # Calcular Média e DP Parciais (sem alterações)
-                splits_sec = splits_lookup.get(result_id, [])
-                media_parciais_str = "N/A"; dp_parciais_str = "N/A"
-                if splits_sec:
-                    try: media = statistics.mean(splits_sec); media_parciais_str = f"{media:.2f}"
-                    except statistics.StatisticsError: media_parciais_str = "N/A"
-                    if len(splits_sec) >= 2:
-                        try:
-                            stdev = statistics.stdev(splits_sec)
-                            if not math.isnan(stdev): dp_parciais_str = f"{stdev:.2f}"
-                            else: dp_parciais_str = "0.00"
-                        except statistics.StatisticsError: # <--- Nível correto
-                            dp_parciais_str = "N/A"
-                    elif len(splits_sec) == 1:
-                         dp_parciais_str = "0.00"
+                # --- Calcular TEMPOS DE VOLTA (INCLUINDO ÚLTIMA), MÉDIA e DP ---
+                cumulative_splits_sec = splits_lookup.get(result_id, [])
+                lap_times_sec = []
+                media_lap_str = "N/A"; dp_lap_str = "N/A"
+                last_cumulative_split = 0.0
 
-                # --- MODIFICAÇÃO: Adicionar display_colocacao e remover Status ---
+                print(f"DEBUG: Parciais Acumuladas (sec): {cumulative_splits_sec}") # DEBUG
+
+                if cumulative_splits_sec:
+                    previous_split_sec = 0.0
+                    print("DEBUG: Calculando voltas intermediárias...") # DEBUG
+                    for i, current_split_sec in enumerate(cumulative_splits_sec):
+                        lap_time = current_split_sec - previous_split_sec
+                        print(f"  DEBUG: Volta {i+1}: Acumulado={current_split_sec:.2f}, Anterior={previous_split_sec:.2f}, Tempo Volta={lap_time:.2f}") # DEBUG
+                        if lap_time >= 0:
+                            lap_times_sec.append(lap_time)
+                        else:
+                            print(f"  DEBUG: AVISO - Tempo de volta negativo ou zero ignorado: {lap_time:.2f}") # DEBUG
+                        previous_split_sec = current_split_sec
+                    last_cumulative_split = previous_split_sec
+                    print(f"DEBUG: Última parcial acumulada (sec): {last_cumulative_split:.2f}") # DEBUG
+
+                # Calcular a última volta
+                print("DEBUG: Calculando última volta...") # DEBUG
+                if athlete_secs is not None and last_cumulative_split >= 0 and cumulative_splits_sec:
+                    last_lap_time = athlete_secs - last_cumulative_split
+                    print(f"  DEBUG: Tempo Final={athlete_secs:.2f}, Última Parcial Acum.={last_cumulative_split:.2f}, Tempo Última Volta={last_lap_time:.2f}") # DEBUG
+                    if last_lap_time >= 0:
+                        lap_times_sec.append(last_lap_time)
+                    else:
+                        print(f"  DEBUG: AVISO - Tempo da última volta negativo ou zero ignorado: {last_lap_time:.2f}") # DEBUG
+                elif not cumulative_splits_sec and athlete_secs is not None:
+                     print(f"  DEBUG: Sem parciais, usando tempo final como única volta: {athlete_secs:.2f}") # DEBUG
+                     lap_times_sec.append(athlete_secs)
+                else:
+                    print("  DEBUG: Não foi possível calcular a última volta (sem tempo final ou sem parciais anteriores).") # DEBUG
+
+                print(f"DEBUG: Lista final de tempos de volta (sec): {lap_times_sec}") # DEBUG
+
+                if lap_times_sec: # Calcula estatísticas sobre os tempos das voltas
+                    try:
+                        media = statistics.mean(lap_times_sec)
+                        media_lap_str = f"{media:.2f}"
+                        print(f"DEBUG: Média calculada: {media:.2f}") # DEBUG
+                    except statistics.StatisticsError:
+                        media_lap_str = "N/A"
+                        print("DEBUG: Erro ao calcular média (StatisticsError)") # DEBUG
+
+                    if len(lap_times_sec) >= 2:
+                        try:
+                            stdev = statistics.stdev(lap_times_sec);
+                            if not math.isnan(stdev):
+                                dp_lap_str = f"{stdev:.2f}"
+                                print(f"DEBUG: DP calculado: {stdev:.2f}") # DEBUG
+                            else:
+                                dp_lap_str = "0.00"
+                                print("DEBUG: DP é NaN, definido como 0.00") # DEBUG
+                        except statistics.StatisticsError:
+                            dp_lap_str = "N/A"
+                            print("DEBUG: Erro ao calcular DP (StatisticsError)") # DEBUG
+                    elif len(lap_times_sec) == 1:
+                         dp_lap_str = "0.00"
+                         print("DEBUG: Apenas 1 volta, DP definido como 0.00") # DEBUG
+                else:
+                    print("DEBUG: Lista de tempos de volta vazia, estatísticas definidas como N/A") # DEBUG
+                # --- Fim do Cálculo ---
+
+
+                # Adiciona os dados ao dicionário (sem Status)
                 athlete_table_data.append({
                     "Atleta": athlete_name, "AnoNasc": row[birth_idx], "Prova": event_desc,
-                    "Colocação": display_colocacao, # <<< Usa o valor determinado
+                    "Colocação": display_colocacao,
                     "Tempo": athlete_time_str or "N/A",
-                    "Média Parciais": media_parciais_str,
-                    "DP Parciais": dp_parciais_str,
+                    "Média Lap": media_lap_str,
+                    "DP Lap": dp_lap_str,
                     "vs Top3": diff3_str, "vs Top2": diff2_str, "vs Top1": diff1_str
-                    # "Status": status or "OK" # <<< REMOVIDO
                 })
-                # --- FIM DA MODIFICAÇÃO ---
 
-            # 3. Atualizar a UI (sem alterações nas chamadas)
+            # 3. Atualizar a UI
             self.lbl_medals_gold.setText(f"Ouro: {gold_count}"); self.lbl_medals_silver.setText(f"Prata: {silver_count}"); self.lbl_medals_bronze.setText(f"Bronze: {bronze_count}")
             athletes_event_str = "\n".join([f"{count} - {event}" for event, count in athletes_per_event.most_common()]); self.txt_athletes_per_event.setPlainText(athletes_event_str or "Nenhum atleta encontrado.")
+            medals_event_str = "";
+            for event, medals in sorted(medals_per_event.items()): g = medals.get(1, 0); s = medals.get(2, 0); b = medals.get(3, 0);
+            if g > 0 or s > 0 or b > 0: medals_event_str += f"{event}: {g} Ouro, {s} Prata, {b} Bronze\n"
+            self.txt_medals_per_event.setPlainText(medals_event_str or "Nenhuma medalha encontrada.")
+            
+            # --- VERIFIQUE/RESTAURE ESTA SEÇÃO ---
             medals_event_str = "";
             for event, medals in sorted(medals_per_event.items()):
                 g = medals.get(1, 0); s = medals.get(2, 0); b = medals.get(3, 0);
@@ -229,60 +275,53 @@ class MeetSummaryTab(QWidget):
             # Certifique-se que a linha abaixo existe e está correta:
             self.txt_medals_per_event.setPlainText(medals_event_str or "Nenhuma medalha encontrada.")
             # --- FIM DA VERIFICAÇÃO ---
+
+            
             self._update_athlete_table(athlete_table_data)
 
-            # Guarda os dados processados para exportação (sem alterações na estrutura, pois athlete_table_data foi modificado)
+            # Guarda os dados processados para exportação
             self.last_summary_data = {"gold": gold_count, "silver": silver_count, "bronze": bronze_count, "athletes_per_event_str": athletes_event_str or "Nenhum atleta encontrado.", "medals_per_event_str": medals_event_str or "Nenhuma medalha encontrada.", "athlete_details": athlete_table_data}
 
         except sqlite3.Error as e: QMessageBox.critical(self, "Erro DB", f"Erro ao gerar resumo:\n{e}"); self._clear_summary()
         except Exception as e: QMessageBox.critical(self, "Erro", f"Erro inesperado ao gerar resumo:\n{e}"); import traceback; print(traceback.format_exc()); self._clear_summary()
         finally:
-            if conn:
-                conn.close()
+            if conn: conn.close()
 
     def _update_athlete_table(self, table_data):
-        """Popula a tabela de detalhes dos atletas, com status na colocação."""
+        """Popula a tabela de detalhes dos atletas, com status na colocação e média/DP por volta."""
         self.table_athletes.setRowCount(0);
         if not table_data: return
-        # --- MODIFICAÇÃO: Remover Cabeçalho Status ---
+        # Cabeçalhos sem Status
         headers = ["Atleta", "AnoNasc", "Prova", "Colocação", "Tempo",
-                   "Média Parciais", "DP Parciais",
-                   "vs Top3", "vs Top2", "vs Top1"] # <<< Status Removido
-        # --- FIM DA MODIFICAÇÃO ---
+                   "Média Lap", "DP Lap",
+                   "vs Top3", "vs Top2", "vs Top1"]
         self.table_athletes.setColumnCount(len(headers)); self.table_athletes.setHorizontalHeaderLabels(headers)
         self.table_athletes.setRowCount(len(table_data)); bold_font = QFont(); bold_font.setBold(True)
         for row_idx, row_dict in enumerate(table_data):
-            col_idx = 0; athlete_place_str = row_dict.get("Colocação", "") # Pega o valor que pode ser número ou status
+            col_idx = 0; athlete_place_str = row_dict.get("Colocação", "")
             for key in headers:
                 value = row_dict.get(key, ""); item = QTableWidgetItem(str(value))
-                # Lógica de negrito (sem alterações)
+                # Lógica de negrito
                 if key == "vs Top1" and athlete_place_str == "1": item.setFont(bold_font)
                 elif key == "vs Top2" and athlete_place_str == "2": item.setFont(bold_font)
                 elif key == "vs Top3" and athlete_place_str == "3": item.setFont(bold_font)
-
-                # --- MODIFICAÇÃO: Lógica de cor baseada na Colocação ---
-                # Colore se a coluna for "Colocação" E o valor não for numérico (e não for "N/A")
-                if key == "Colocação" and not value.isdigit() and value != "N/A":
-                     item.setForeground(Qt.GlobalColor.red) # Exemplo: cor vermelha para DSQ, DNS, etc.
-                # --- FIM DA MODIFICAÇÃO ---
-
+                # Lógica de cor para Colocação
+                if key == "Colocação" and not value.isdigit() and value != "N/A": item.setForeground(Qt.GlobalColor.red)
                 self.table_athletes.setItem(row_idx, col_idx, item); col_idx += 1
         self.table_athletes.resizeColumnsToContents()
 
-    # _clear_summary (sem alterações)
     def _clear_summary(self):
         self.lbl_medals_gold.setText("Ouro: 0"); self.lbl_medals_silver.setText("Prata: 0"); self.lbl_medals_bronze.setText("Bronze: 0")
         self.txt_athletes_per_event.clear(); self.txt_medals_per_event.clear(); self.table_athletes.setRowCount(0); self.table_athletes.setColumnCount(0)
         self.last_summary_data = None; self.last_meet_name = ""
 
-    # refresh_data (sem alterações)
     @Slot()
     def refresh_data(self):
         print("MeetSummaryTab: Recebido sinal para refresh_data."); self._populate_meet_combo()
 
     @Slot()
     def _export_to_pdf(self):
-        """Exporta o resumo atual para PDF, com status na colocação."""
+        """Exporta o resumo atual para PDF, com status na colocação e média/DP por volta."""
         if not REPORTLAB_AVAILABLE: QMessageBox.warning(self, "Indisponível", "'reportlab' não encontrada."); return
         if self.current_meet_id is None or self.last_summary_data is None: QMessageBox.warning(self, "Nenhum Dado", "Selecione e gere o resumo."); return
         default_filename = re.sub(r'[\\/*?:"<>|]', "", self.last_meet_name.split('(')[0].strip()); default_filename = f"Resumo_{default_filename}.pdf"
@@ -293,12 +332,9 @@ class MeetSummaryTab(QWidget):
             page_width, page_height = A4; left_margin = 1.0*cm; right_margin = 1.0*cm; top_margin = 1.5*cm; bottom_margin = 1.5*cm
             doc = SimpleDocTemplate(fileName, pagesize=A4, leftMargin=left_margin, rightMargin=right_margin, topMargin=top_margin, bottomMargin=bottom_margin)
             styles = getSampleStyleSheet(); story = []
-            # Ajustar tamanho da fonte do estilo Normal globalmente pode ser uma opção,
-            # mas vamos focar na tabela primeiro.
-            # styles['Normal'].fontSize = 10 # Exemplo de mudança global
             title_style = styles['h1']; title_style.alignment = TA_CENTER; heading_style = styles['h2']; normal_style = styles['Normal']
 
-            # 1, 2, 3, 4: Título e Resumos (sem alterações)
+            # 1, 2, 3, 4: Título e Resumos
             story.append(Paragraph(f"Resumo da Competição: {self.last_meet_name}", title_style)); story.append(Spacer(1, 0.5*cm))
             story.append(Paragraph("<b>Medalhas Totais (Clube)</b>", heading_style)); story.append(Paragraph(f"Ouro: {self.last_summary_data['gold']}", normal_style)); story.append(Paragraph(f"Prata: {self.last_summary_data['silver']}", normal_style)); story.append(Paragraph(f"Bronze: {self.last_summary_data['bronze']}", normal_style)); story.append(Spacer(1, 0.5*cm))
             story.append(Paragraph("<b>Atletas por Prova</b>", heading_style)); athletes_text = self.last_summary_data['athletes_per_event_str']; athletes_lines = athletes_text.split('\n')
@@ -314,23 +350,21 @@ class MeetSummaryTab(QWidget):
             story.append(Paragraph("<b>Detalhes dos Atletas na Competição</b>", heading_style)); story.append(Spacer(1, 0.2*cm))
 
             table_content = []
+            # Cabeçalhos PDF sem Status
             pdf_headers = ["Atleta", "Nasc", "Prova", "Col", "Tempo",
-                           "Média Parciais", "DP Parciais",
+                           "Média Lap", "DP Lap",
                            "vs Top3", "vs Top2", "vs Top1"]
+            # Mapeamento sem Status
             header_to_key_map = {
                 "Atleta": "Atleta", "Nasc": "AnoNasc", "Prova": "Prova", "Col": "Colocação",
-                "Tempo": "Tempo", "Média Parciais": "Média Parciais", "DP Parciais": "DP Parciais",
+                "Tempo": "Tempo", "Média Lap": "Média Lap", "DP Lap": "DP Lap",
                 "vs Top3": "vs Top3", "vs Top2": "vs Top2", "vs Top1": "vs Top1"
             }
-            # Usar um estilo com tamanho 10 para o cabeçalho também
-            header_style = styles['Normal']
-            header_style.fontSize = 10
+            header_style = styles['Normal']; header_style.fontSize = 10
             table_content.append([Paragraph(f"<b>{h}</b>", header_style) for h in pdf_headers])
 
             athlete_details = self.last_summary_data['athlete_details']
-            # Usar um estilo com tamanho 10 para o corpo da tabela
-            body_style = styles['Normal']
-            body_style.fontSize = 8
+            body_style = styles['Normal']; body_style.fontSize = 10
             for row_idx, row_dict in enumerate(athlete_details):
                 row_list = []; pdf_row = row_idx + 1
                 for h in pdf_headers:
@@ -340,22 +374,21 @@ class MeetSummaryTab(QWidget):
                        (h == "vs Top2" and athlete_place_str == "2") or \
                        (h == "vs Top3" and athlete_place_str == "3"):
                         is_bold = True
-                    # Usar body_style para o parágrafo
                     cell_paragraph = Paragraph(f"<b>{cell_text}</b>" if is_bold else cell_text, body_style);
                     row_list.append(cell_paragraph)
                 table_content.append(row_list)
 
             if table_content:
                 available_width = page_width - left_margin - right_margin
-                # Larguras das colunas (podem precisar de reajuste com fonte maior)
+                # Larguras sem Status, ajustadas
                 col_widths = [
-                    4.0*cm,  # Atleta
+                    4.5*cm,  # Atleta
                     1.5*cm,  # Nasc
-                    2.5*cm,  # Prova
-                    1.5*cm,  # Col
-                    2.5*cm,  # Tempo
-                    1.5*cm,  # Média Parciais
-                    1.5*cm,  # DP Parciais
+                    3.5*cm,  # Prova
+                    1.0*cm,  # Col
+                    2.0*cm,  # Tempo
+                    1.5*cm,  # Média Lap
+                    1.5*cm,  # DP Lap
                     1.5*cm,  # vs Top3
                     1.5*cm,  # vs Top2
                     1.5*cm   # vs Top1
@@ -365,25 +398,22 @@ class MeetSummaryTab(QWidget):
                      print("AVISO: Ajustando larguras proporcionalmente."); scale_factor = available_width / sum(col_widths); col_widths = [w * scale_factor for w in col_widths]
 
                 table = Table(table_content, colWidths=col_widths, repeatRows=1)
-                # --- MODIFICAÇÃO: Remover FONTSIZE global da tabela ---
-                # A fonte agora é definida nos Paragraphs
+                # Estilos
                 style = TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                     ('ALIGN', (0, 1), (0, -1), 'LEFT'), ('ALIGN', (2, 1), (2, -1), 'LEFT'),
                     ('BOTTOMPADDING', (0, 0), (-1, 0), 6), ('TOPPADDING', (0, 0), (-1, 0), 6),
                     ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    # ('FONTSIZE', (0, 0), (-1, -1), 6), # <<< REMOVIDO
+                    # ('FONTSIZE', (0, 0), (-1, -1), 10), # Removido
                     ('TOPPADDING', (0, 1), (-1, -1), 2), ('BOTTOMPADDING', (0, 1), (-1, -1), 2),
                 ])
-                # --- FIM DA MODIFICAÇÃO ---
-
-                # Linhas alternadas (sem alterações)
+                # Linhas alternadas
                 for i in range(1, len(table_content)):
                     if i % 2 == 0: style.add('BACKGROUND', (0, i), (-1, i), colors.lightgrey)
                 table.setStyle(style); story.append(table)
 
-            # Construir PDF com footer (sem alterações)
+            # Construir PDF com footer
             doc.build(story, onFirstPage=self._draw_footer, onLaterPages=self._draw_footer)
             QMessageBox.information(self, "Exportação Concluída", f"Resumo salvo com sucesso em:\n{fileName}")
 
@@ -391,9 +421,9 @@ class MeetSummaryTab(QWidget):
             QMessageBox.critical(self, "Erro ao Exportar PDF", f"Ocorreu um erro ao gerar o arquivo PDF:\n{e}")
             import traceback; print(traceback.format_exc())
 
-    # _draw_footer (sem alterações)
     def _draw_footer(self, canvas, doc):
         canvas.saveState(); canvas.setFont('Helvetica', 7); canvas.setFillColor(colors.grey)
         footer_text = "Luiz Arthur Feitosa dos Santos - luizsantos@utfpr.edu.br"
         page_width = doc.pagesize[0]; bottom_margin = doc.bottomMargin
         canvas.drawCentredString(page_width / 2.0, bottom_margin * 0.75, footer_text); canvas.restoreState()
+

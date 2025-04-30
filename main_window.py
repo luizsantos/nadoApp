@@ -64,8 +64,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.view_data_tab, "Visualizar Dados")
 
         # 3. Aba de Filtro Avançado (FilterDataTab)
-        self.filter_data_tab = FilterDataTab(DB_PATH)
-        self.tabs.addTab(self.filter_data_tab, "Filtrar Dados")
+        #self.filter_data_tab = FilterDataTab(DB_PATH)
+        #self.tabs.addTab(self.filter_data_tab, "Filtrar Dados")
 
         # <<< NOVA Aba de Resumo da Competição >>>
         self.meet_summary_tab = MeetSummaryTab(DB_PATH)
@@ -83,7 +83,7 @@ class MainWindow(QMainWindow):
         # --- Conectar Sinais ---
         # Conecta o sinal de sucesso da importação aos slots de refresh das outras abas
         self.import_tab.import_success.connect(self.view_data_tab.refresh_data)
-        self.import_tab.import_success.connect(self.filter_data_tab.refresh_data)
+        #self.import_tab.import_success.connect(self.filter_data_tab.refresh_data)
         self.import_tab.import_success.connect(self.analysis_tab.refresh_data)
         self.import_tab.import_success.connect(self.edit_meet_tab.refresh_data)
         self.import_tab.import_success.connect(self.meet_summary_tab.refresh_data)
