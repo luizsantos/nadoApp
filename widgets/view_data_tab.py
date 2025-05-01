@@ -3,7 +3,8 @@ import sys
 import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel, # Adicionado QLabel
                                QComboBox, QPushButton, QTableWidget, QTableWidgetItem,
-                               QAbstractItemView, QMessageBox, QSpacerItem, QSizePolicy)
+                               QAbstractItemView, QMessageBox, QSpacerItem, QSizePolicy,
+                               QFileDialog, QHBoxLayout) # Adicionado QFileDialog, QHBoxLayout
 from PySide6.QtCore import Slot, Qt
 from PySide6.QtGui import QFont, QPixmap # Adicionado QPixmap
 import sqlite3
@@ -24,6 +25,26 @@ except ImportError:
     print("AVISO: Matplotlib não encontrado. Sparklines não estarão disponíveis.")
     # Definir plt como None para verificações posteriores
     plt = None
+
+# Imports do ReportLab (similar ao meet_summary_tab)
+try:
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+    from reportlab.lib.units import inch, cm
+    from reportlab.lib.pagesizes import A4, landscape # Importa landscape
+    from reportlab.lib import colors
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    # Definir classes dummy se necessário para evitar erros, mas a funcionalidade estará desabilitada
+    class SimpleDocTemplate: pass; 
+    class Paragraph: pass; 
+    class Spacer: pass; 
+    class Table: pass; landscape = lambda x: x # Dummy landscape
+    class TableStyle: pass; 
+    class Image: pass; 
+    def getSampleStyleSheet(): return {}; colors = None; TA_LEFT=0; TA_CENTER=1; TA_RIGHT=2; cm=1; A4=(0,0)
 
 # Adiciona o diretório pai
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -63,10 +84,10 @@ def format_time_diff(diff_seconds):
 
 
 class ViewDataTab(QWidget):
-    # __init__, _populate_filters, _build_query_and_params (sem alterações no código fornecido anteriormente)
     def __init__(self, db_path, parent=None):
         super().__init__(parent)
         self.db_path = db_path
+        self.current_table_data = [] # Para guardar os dados processados para exportação
         self.main_layout = QVBoxLayout(self)
         filter_group = QWidget(); filter_layout = QGridLayout(filter_group); filter_layout.setContentsMargins(0, 0, 0, 10)
         lbl_athlete = QLabel("Atleta:"); lbl_meet = QLabel("Competição:"); lbl_event = QLabel("Tipo de Prova:")
@@ -82,9 +103,25 @@ class ViewDataTab(QWidget):
         filter_layout.addItem(QSpacerItem(20, 10, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum), 2, 2, 1, 2)
         filter_layout.addWidget(self.btn_apply_filter, 3, 0, 1, 4); self.main_layout.addWidget(filter_group)
         self.table_widget = QTableWidget(); self.table_widget.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table_widget.setAlternatingRowColors(True); self.table_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_widget.setAlternatingRowColors(True); self.table_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows);
+
+        # --- Botão Exportar PDF ---
+        export_layout = QHBoxLayout()
+        self.btn_export_pdf = QPushButton("Exportar para PDF")
+        self.btn_export_pdf.clicked.connect(self._export_to_pdf)
+        self.btn_export_pdf.setEnabled(False) # Desabilitado inicialmente
+        if not REPORTLAB_AVAILABLE or not MATPLOTLIB_AVAILABLE:
+            self.btn_export_pdf.setEnabled(False)
+            tooltip = ["Exportação PDF indisponível."]
+            if not REPORTLAB_AVAILABLE: tooltip.append("- Biblioteca 'reportlab' não encontrada.")
+            if not MATPLOTLIB_AVAILABLE: tooltip.append("- Biblioteca 'matplotlib' não encontrada.")
+            self.btn_export_pdf.setToolTip("\n".join(tooltip))
+        export_layout.addStretch(); export_layout.addWidget(self.btn_export_pdf); export_layout.addStretch()
+
         self.table_widget.setSortingEnabled(True); self.main_layout.addWidget(QLabel("Resultados Filtrados:"))
-        self.main_layout.addWidget(self.table_widget); self.setLayout(self.main_layout); self._populate_filters()
+        self.main_layout.addWidget(self.table_widget)
+        self.main_layout.addLayout(export_layout) # Adiciona layout do botão abaixo da tabela
+        self.setLayout(self.main_layout); self._populate_filters()
 
     def _populate_filters(self):
         conn = None
@@ -195,12 +232,70 @@ class ViewDataTab(QWidget):
             return None
     # --- FIM DA NOVA FUNÇÃO ---
 
+    # --- NOVA FUNÇÃO: Gerar Sparkline para PDF (copiada de meet_summary_tab) ---
+    def _generate_sparkline_pdf_image(self, lap_times, width_px=80, height_px=20):
+        """Gera dados de imagem PNG de um sparkline para o PDF."""
+        if not MATPLOTLIB_AVAILABLE or not lap_times:
+            return None
+        try:
+            fig, ax = plt.subplots(figsize=(width_px / 72, height_px / 72), dpi=72)
+            fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+            ax.plot(range(len(lap_times)), lap_times, color='blue', linewidth=1.5) # Linha um pouco mais grossa para PDF
+            if len(lap_times) > 0:
+                mean_time = statistics.mean(lap_times)
+                ax.axhline(mean_time, color='red', linestyle='--', linewidth=1.0) # Linha média um pouco mais grossa
+            ax.axis('off')
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', transparent=True)
+            plt.close(fig)
+            buf.seek(0)
+            return buf # Retorna o buffer BytesIO
+        except Exception as e:
+            print(f"Erro ao gerar sparkline para PDF: {e}")
+            try:
+                if 'fig' in locals() and fig: plt.close(fig)
+            except: pass
+            return None
+    # --- FIM DA NOVA FUNÇÃO ---
+
+    # --- NOVA FUNÇÃO AUXILIAR: Obter valor comparável para ordenação ---
+    def _get_sort_value(self, item, key):
+        """Retorna um valor comparável para ordenação a partir do dicionário e chave."""
+        value = item.get(key)
+
+        # Lida com None ou N/A - coloca no final por padrão
+        if value is None: return float('inf')
+        if isinstance(value, str) and value == "N/A": return float('inf')
+
+        # Colunas de Tempo/Numéricas que podem ser string 'N/A' ou tempo formatado
+        if key in ["Tempo", "Média Lap", "DP Lap", "vs Top1", "vs Top2", "vs Top3"]:
+            if isinstance(value, (int, float)): return value # Já numérico
+            if isinstance(value, str):
+                # Tenta converter tempo para segundos, tratando o 's' opcional
+                seconds = time_to_seconds(value.rstrip('s'))
+                return seconds if seconds is not None else float('inf') # Converteu? Usa. Senão, final.
+            return float('inf') # Tipo inesperado, coloca no final
+
+        # Coluna AnoNasc
+        elif key == "AnoNasc":
+            try: return int(value)
+            except (ValueError, TypeError): return float('inf') # Não numérico, coloca no final
+
+        # Coluna Colocação (pode ser número ou string como 'DSQ')
+        elif key == "Colocação":
+            try: return int(value) # Tenta converter para int
+            except (ValueError, TypeError): return str(value).lower() # Se falhar, trata como string minúscula
+
+        # Default: Trata como string minúscula
+        return str(value).lower()
+    # --- FIM DA FUNÇÃO AUXILIAR ---
+
     @Slot()
     def _apply_filters(self):
         """Executa a query filtrada, calcula dados (incluindo sparkline) e atualiza a tabela."""
         query_string, params = self._build_query_and_params()
         conn = None
-        final_table_data = []
+        self.current_table_data = [] # Limpa dados antigos antes de aplicar
 
         try:
             conn = get_db_connection(self.db_path)
@@ -215,11 +310,11 @@ class ViewDataTab(QWidget):
             results_data = cursor.fetchall()
             print(f"ViewDataTab: Query Principal retornou: {len(results_data)} linhas")
 
-            if not results_data: self._clear_table(); return
+            if not results_data: self._clear_table(); self.btn_export_pdf.setEnabled(False); return # Desabilita exportação se não há dados
 
             # Encontrar índices
             try:
-                result_id_idx = query_headers.index('result_id_lenex'); athlete_idx = query_headers.index('Atleta'); birth_idx = query_headers.index('AnoNasc'); event_idx = query_headers.index('Prova'); place_idx = query_headers.index('Colocacao'); time_idx = query_headers.index('Tempo'); status_idx = query_headers.index('Status'); event_db_id_idx = query_headers.index('event_db_id'); agegroup_db_id_idx = query_headers.index('agegroup_db_id'); meet_id_idx = query_headers.index('meet_id')
+                result_id_idx = query_headers.index('result_id_lenex'); athlete_idx = query_headers.index('Atleta'); birth_idx = query_headers.index('AnoNasc'); event_idx = query_headers.index('Prova'); place_idx = query_headers.index('Colocacao'); time_idx = query_headers.index('Tempo'); status_idx = query_headers.index('Status'); event_db_id_idx = query_headers.index('event_db_id'); agegroup_db_id_idx = query_headers.index('agegroup_db_id'); meet_id_idx = query_headers.index('meet_id'); city_idx = query_headers.index('CidadeCompeticao'); date_idx = query_headers.index('Data') # Adicionado city_idx e date_idx
             except ValueError as e: QMessageBox.critical(self, "Erro Interno", f"Coluna não encontrada na query: {e}"); self._clear_table(); return
 
             # Buscar Dados Adicionais (Top3 e Parciais)
@@ -239,7 +334,7 @@ class ViewDataTab(QWidget):
             # --- Processar Resultados e Calcular ---
             for row in results_data:
                 result_id = row[result_id_idx]; place = row[place_idx]; status = row[status_idx]; event_db_id = row[event_db_id_idx]; ag_db_id = row[agegroup_db_id_idx]; athlete_time_str = row[time_idx]
-
+                city = row[city_idx]; date = row[date_idx] # Pega cidade e data
                 # Calcular display_colocacao
                 display_colocacao = "N/A"; is_valid_result = status is None or status.upper() == 'OK' or status.upper() == 'OFFICIAL'
                 if not is_valid_result and status: display_colocacao = status.upper()
@@ -278,17 +373,18 @@ class ViewDataTab(QWidget):
                     try: media = statistics.mean(lap_times_sec); media_lap_str = f"{media:.2f}"
                     except statistics.StatisticsError: media_lap_str = "N/A"
                     if len(lap_times_sec) >= 2:
-                        try: 
+                        try:
                             stdev = statistics.stdev(lap_times_sec);
                             if not math.isnan(stdev): dp_lap_str = f"{stdev:.2f}"
                             else: dp_lap_str = "0.00"
-                        except statistics.StatisticsError: 
+                        except statistics.StatisticsError:
                             dp_lap_str = "N/A"
                     elif len(lap_times_sec) == 1: dp_lap_str = "0.00"
 
                 # Montar dicionário para a linha da tabela final (com Lap Times)
-                final_table_data.append({
-                    "Atleta": row[athlete_idx], "AnoNasc": row[birth_idx], "Prova": row[event_idx],
+                self.current_table_data.append({ # Adiciona ao atributo da instância
+                    "Atleta": row[athlete_idx], "AnoNasc": row[birth_idx],
+                    "Prova": row[event_idx], "Cidade": city, "Data": date, # Adicionado Cidade e Data
                     "Colocação": display_colocacao, "Tempo": athlete_time_str or "N/A",
                     "Média Lap": media_lap_str, "DP Lap": dp_lap_str,
                     "Lap Times": lap_times_sec, # <<< Armazena a lista de tempos
@@ -298,19 +394,27 @@ class ViewDataTab(QWidget):
 
             # --- Popular Tabela ---
             # Define os cabeçalhos finais (com Ritmo Sparkline)
+            # Move "Cidade" e "Data" para o final
             display_headers = ["Atleta", "AnoNasc", "Prova", "Colocação", "Tempo",
                                "Média Lap", "DP Lap", "Ritmo", # <<< Novo Cabeçalho
-                               "vs Top3", "vs Top2", "vs Top1"]
+                               "vs Top3", "vs Top2", "vs Top1", "Cidade", "Data"] # <<< Movido para o final
 
-            self._clear_table(); self.table_widget.setColumnCount(len(display_headers))
-            self.table_widget.setHorizontalHeaderLabels(display_headers); self.table_widget.setRowCount(len(final_table_data))
+            # Limpa APENAS a exibição da tabela, sem limpar self.current_table_data aqui
+            self.table_widget.setRowCount(0)
+            self.table_widget.setColumnCount(0)
+            self.btn_export_pdf.setEnabled(False) # Desabilita exportação temporariamente
+
+            self.table_widget.setColumnCount(len(display_headers))
+            self.table_widget.setHorizontalHeaderLabels(display_headers); self.table_widget.setRowCount(len(self.current_table_data))
             bold_font = QFont(); bold_font.setBold(True)
 
             # Mapeamento de cabeçalho para chave do dicionário
             header_to_key_map = {h: h for h in display_headers} # Inicializa
+            header_to_key_map["Cidade"] = "Cidade" # Mapeia o cabeçalho "Cidade"
+            header_to_key_map["Data"] = "Data"     # Mapeia o cabeçalho "Data"
             header_to_key_map["Ritmo"] = "Lap Times" # Coluna "Ritmo" usa dados de "Lap Times"
 
-            for row_idx, row_dict in enumerate(final_table_data):
+            for row_idx, row_dict in enumerate(self.current_table_data):
                 col_idx = 0; athlete_place_str = row_dict.get("Colocação", "")
                 for key in display_headers: # Itera sobre os cabeçalhos de exibição
                     dict_key = header_to_key_map[key] # Pega a chave correta
@@ -356,12 +460,212 @@ class ViewDataTab(QWidget):
             except ValueError:
                 pass # Coluna não encontrada
 
-        except sqlite3.Error as e: QMessageBox.critical(self, "Erro de Consulta", f"Erro ao executar consulta/processamento:\n{e}"); self._clear_table()
-        except Exception as e: QMessageBox.critical(self, "Erro Inesperado", f"Ocorreu um erro inesperado ao aplicar filtros:\n{e}"); import traceback; print(traceback.format_exc()); self._clear_table()
+            # Habilita botão de exportar se as libs estiverem ok
+            if self.current_table_data: # Só habilita se realmente populou algo
+                self.btn_export_pdf.setEnabled(REPORTLAB_AVAILABLE and MATPLOTLIB_AVAILABLE)
+
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Erro de Consulta", f"Erro ao executar consulta/processamento:\n{e}")
+            self._clear_table(); self.btn_export_pdf.setEnabled(False); self.current_table_data = []
+        except Exception as e:
+            QMessageBox.critical(self, "Erro Inesperado", f"Ocorreu um erro inesperado ao aplicar filtros:\n{e}")
+            import traceback; print(traceback.format_exc()); self._clear_table(); self.btn_export_pdf.setEnabled(False); self.current_table_data = []
         finally:
             if conn: conn.close()
 
-    # refresh_data, _clear_table (sem alterações no código fornecido anteriormente)
+    @Slot()
+    def _export_to_pdf(self):
+        """Exporta os dados filtrados atuais (self.current_table_data) para PDF."""
+        if not REPORTLAB_AVAILABLE or not MATPLOTLIB_AVAILABLE:
+             tooltip = ["Exportação PDF indisponível."]
+             if not REPORTLAB_AVAILABLE: tooltip.append("- Biblioteca 'reportlab' não encontrada.")
+             if not MATPLOTLIB_AVAILABLE: tooltip.append("- Biblioteca 'matplotlib' não encontrada.")
+             QMessageBox.warning(self, "Funcionalidade Indisponível", "\n".join(tooltip))
+             return
+
+        if not self.current_table_data:
+            QMessageBox.warning(self, "Nenhum Dado", "Não há dados filtrados para exportar. Aplique os filtros primeiro.")
+            return
+
+        # --- Obter Informação de Ordenação da Tabela ---
+        header = self.table_widget.horizontalHeader()
+        sort_col_index = header.sortIndicatorSection()
+        sort_order = header.sortIndicatorOrder()
+        sort_dict_key = None
+        key_func = None
+
+        # Mapeamento de cabeçalho para chave do dicionário (necessário aqui para encontrar a chave de ordenação)
+        pdf_headers = ["Atleta", "Nasc", "Prova", "Col", "Tempo", "Média Lap", "DP Lap", "Ritmo", "vs T3", "vs T2", "vs T1", "Cidade", "Data"]
+        header_to_key_map_pdf = { # Mapeamento para chaves do dicionário self.current_table_data
+            "Atleta": "Atleta", "Nasc": "AnoNasc", "Prova": "Prova", "Col": "Colocação", "Tempo": "Tempo",
+            "Média Lap": "Média Lap", "DP Lap": "DP Lap", "Ritmo": "Lap Times", "vs T3": "vs Top3",
+            "vs T2": "vs Top2", "vs T1": "vs Top1", "Cidade": "Cidade", "Data": "Data"
+        }
+        # Mapeamento reverso (índice da coluna visual -> chave do dicionário)
+        current_display_headers = [self.table_widget.horizontalHeaderItem(i).text() for i in range(self.table_widget.columnCount())]
+        header_to_key_map_display = {h: h for h in current_display_headers}
+        header_to_key_map_display["Ritmo"] = "Lap Times" # Ajuste para coluna Ritmo
+        header_to_key_map_display["Cidade"] = "Cidade"
+        header_to_key_map_display["Data"] = "Data"
+
+        if sort_col_index != -1 and 0 <= sort_col_index < len(current_display_headers):
+            sort_header_text = current_display_headers[sort_col_index]
+            sort_dict_key = header_to_key_map_display.get(sort_header_text)
+            if sort_dict_key == "Lap Times": # Não ordenar pela lista de parciais diretamente
+                sort_dict_key = None
+            elif sort_dict_key:
+                key_func = lambda item: self._get_sort_value(item, sort_dict_key)
+        # --- Fim da Obtenção de Ordenação ---
+
+        # --- Gerar Nome de Arquivo Descritivo ---
+        athlete_filter = self.combo_athlete.currentText()
+        meet_filter = self.combo_meet.currentText()
+        event_filter = self.combo_event.currentText()
+        course_filter = self.combo_course.currentText()
+        year_filter = self.combo_birth_year.currentText()
+
+        filename_parts = ["Resultados"]
+        if athlete_filter != ALL_FILTER: filename_parts.append(athlete_filter.split(' ')[0]) # Primeiro nome
+        if meet_filter != ALL_FILTER:
+            meet_name_part = meet_filter.split('(')[0].strip() # Pega só o nome do meet
+            # Limita o tamanho do nome do meet no filename
+            max_meet_len = 20
+            if len(meet_name_part) > max_meet_len: meet_name_part = meet_name_part[:max_meet_len] + "..."
+            filename_parts.append(meet_name_part)
+        if event_filter != ALL_FILTER: filename_parts.append(event_filter.replace(" ", "")) # Remove espaços do evento
+        if year_filter != ALL_FILTER: filename_parts.append(year_filter)
+
+        raw_filename = "_".join(filename_parts)
+        # Sanitiza o nome do arquivo (remove caracteres inválidos)
+        sanitized_filename = re.sub(r'[\\/*?:"<>|]', "", raw_filename)
+        default_filename = f"{sanitized_filename}.pdf"
+        # --- Fim da Geração do Nome ---
+
+        fileName, _ = QFileDialog.getSaveFileName(self, "Salvar PDF com Resultados Filtrados", default_filename, "PDF (*.pdf)")
+        if not fileName:
+            return
+
+        try:
+            # --- Ordenar os dados ANTES de gerar o PDF ---
+            pdf_data = list(self.current_table_data) # Cria uma cópia para ordenar
+            if key_func:
+                reverse_sort = (sort_order == Qt.DescendingOrder)
+                try:
+                    pdf_data.sort(key=key_func, reverse=reverse_sort)
+                    print(f"PDF Export: Ordenando por '{sort_dict_key}', reverso={reverse_sort}")
+                except Exception as e:
+                    # Informa sobre erro na ordenação, mas continua com dados não ordenados
+                    print(f"PDF Export: Erro durante a ordenação por chave '{sort_dict_key}': {e}. Exportando sem ordenação específica.")
+            # --- Fim da Ordenação ---
+
+            # Usa landscape(A4) para orientação horizontal
+            page_width, page_height = landscape(A4)
+            left_margin = 1.0*cm; right_margin = 1.0*cm; top_margin = 1.5*cm; bottom_margin = 1.5*cm
+            doc = SimpleDocTemplate(fileName, pagesize=landscape(A4), leftMargin=left_margin, rightMargin=right_margin, topMargin=top_margin, bottomMargin=bottom_margin)
+            styles = getSampleStyleSheet()
+            story = []
+
+            # Título
+            title_style = styles['h1']; title_style.alignment = TA_CENTER
+            story.append(Paragraph("Resultados Filtrados", title_style))
+            story.append(Spacer(1, 0.5*cm))
+
+            # --- Adicionar Informações de Filtragem ---
+            filter_style = styles['Normal']; filter_style.fontSize = 9
+            filter_lines = ["<b>Filtros Aplicados:</b>"]
+            if athlete_filter != ALL_FILTER: filter_lines.append(f" - Atleta: {athlete_filter}")
+            if meet_filter != ALL_FILTER: filter_lines.append(f" - Competição: {meet_filter}")
+            if event_filter != ALL_FILTER: filter_lines.append(f" - Tipo de Prova: {event_filter}")
+            if course_filter != ALL_FILTER: filter_lines.append(f" - Piscina: {course_filter}")
+            if year_filter != ALL_FILTER: filter_lines.append(f" - Ano Nasc.: {year_filter}")
+
+            if len(filter_lines) > 1: # Se algum filtro foi aplicado
+                for line in filter_lines: story.append(Paragraph(line, filter_style))
+            # --- Fim das Informações de Filtragem ---
+            story.append(Spacer(1, 0.5*cm))
+
+            # Tabela de Dados
+            table_content = []
+            # Usa pdf_headers e header_to_key_map_pdf definidos anteriormente
+
+            header_style = styles['Normal']; 
+            header_style.fontSize = 7; 
+            header_style.alignment = TA_CENTER
+            table_content.append([Paragraph(f"<b>{h}</b>", header_style) for h in pdf_headers])
+            
+            body_style = styles['Normal']; 
+            body_style.fontSize = 6 # Diminuído de 7 para 6
+            sparkline_pdf_width = 1.8*cm; sparkline_pdf_height = 0.4*cm # Tamanho da imagem no PDF
+
+            for row_dict in pdf_data: # <<< USA A LISTA ORDENADA (ou a cópia original se ordenação falhou)
+                row_list = []
+                athlete_place_str = row_dict.get("Colocação", "")
+                for h in pdf_headers:
+                    dict_key = header_to_key_map_pdf[h]; value = row_dict.get(dict_key, "") # <<< CORREÇÃO AQUI
+                    if h == "Ritmo":
+                        lap_times = value # Lista de tempos
+                        image_buffer = self._generate_sparkline_pdf_image(lap_times, width_px=int(sparkline_pdf_width / cm * 72), height_px=int(sparkline_pdf_height / cm * 72))
+                        if image_buffer:
+                            img = Image(image_buffer, width=sparkline_pdf_width, height=sparkline_pdf_height)
+                            row_list.append(img)
+                        else:
+                            row_list.append(Paragraph("N/A", body_style))
+                    else:
+                        cell_text = str(value)
+                        is_bold = False
+                        if (h == "vs T1" and athlete_place_str == "1") or \
+                           (h == "vs T2" and athlete_place_str == "2") or \
+                           (h == "vs T3" and athlete_place_str == "3"):
+                            is_bold = True
+                        # Alinhamento padrão central, exceto para Atleta e Prova
+                        align_style = Paragraph(f"<b>{cell_text}</b>" if is_bold else cell_text, body_style)
+                        if h in ["Atleta", "Prova", "Cidade"]: align_style.style.alignment = TA_LEFT
+                        else: align_style.style.alignment = TA_CENTER
+                        row_list.append(align_style)
+                table_content.append(row_list)
+
+            if len(table_content) > 1: # Se tiver mais que o cabeçalho
+                # A largura disponível agora é a altura da página A4 menos as margens
+                available_width = page_width - left_margin - right_margin
+                # Definir larguras (ajustadas para aproveitar mais espaço horizontal)
+                col_widths = [ #"Atleta", "Nasc", "Prova", "Col", "Tempo", "Média Lap", "DP Lap", "Ritmo", "vs T3", "vs T2", "vs T1", "Cidade", "Data"
+                    3.5*cm, # Atleta (mais espaço)
+                    1*cm,   # Nasc
+                    3.0*cm, # Prova (mais espaço)
+                    1.0*cm, # Col
+                    1.8*cm, # Tempo
+                    1.2*cm, # Média lap
+                    1*cm,   # DP lap
+                    sparkline_pdf_width + 0.1*cm, # Ritmo
+                    1.5*cm, # vs T3 (um pouco mais)
+                    1.5*cm, # vs T2 (um pouco mais)
+                    1.2*cm, # vs T1
+                    2.0*cm, # Cidade
+                    1.8*cm  # Data
+                    ]
+                if sum(col_widths) > available_width: scale = available_width / sum(col_widths); col_widths = [w * scale for w in col_widths]
+                table = Table(table_content, colWidths=col_widths, repeatRows=1)
+                style = TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('BOTTOMPADDING', (0, 0), (-1, 0), 5), ('TOPPADDING', (0, 0), (-1, 0), 5), ('GRID', (0, 0), (-1, -1), 0.5, colors.black), ('TOPPADDING', (0, 1), (-1, -1), 1), ('BOTTOMPADDING', (0, 1), (-1, -1), 1)])
+                for i in range(1, len(table_content)):
+                    if i % 2 == 0: style.add('BACKGROUND', (0, i), (-1, i), colors.whitesmoke) # Linhas alternadas mais claras
+                table.setStyle(style); story.append(table)
+
+            # Construir PDF
+            # Adiciona chamada para desenhar o rodapé
+            doc.build(story, onFirstPage=self._draw_footer, onLaterPages=self._draw_footer)
+            QMessageBox.information(self, "Exportação Concluída", f"Resultados filtrados salvos com sucesso em:\n{fileName}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ao Exportar PDF", f"Ocorreu um erro ao gerar o arquivo PDF:\n{e}")
+            import traceback; print(traceback.format_exc())
+
+    # --- NOVO MÉTODO: Copiado de meet_summary_tab.py ---
+    def _draw_footer(self, canvas, doc):
+        canvas.saveState(); canvas.setFont('Helvetica', 7); canvas.setFillColor(colors.grey)
+        footer_text = "Luiz Arthur Feitosa dos Santos - luizsantos@utfpr.edu.br"
+        page_width = doc.pagesize[0]; bottom_margin = doc.bottomMargin
+        canvas.drawCentredString(page_width / 2.0, bottom_margin * 0.75, footer_text); canvas.restoreState()
+
     @Slot()
     def refresh_data(self):
         print("ViewDataTab: Recebido sinal para refresh_data.")
@@ -377,5 +681,6 @@ class ViewDataTab(QWidget):
         self._apply_filters()
 
     def _clear_table(self):
-        self.table_widget.setRowCount(0); self.table_widget.setColumnCount(0)
-
+        self.table_widget.setRowCount(0); self.table_widget.setColumnCount(0);
+        self.current_table_data = [] # Limpa os dados guardados
+        self.btn_export_pdf.setEnabled(False) # Desabilita exportação ao limpar
