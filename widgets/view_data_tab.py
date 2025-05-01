@@ -1,16 +1,29 @@
 # NadosApp/widgets/view_data_tab.py
 import sys
 import os
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel,
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel, # Adicionado QLabel
                                QComboBox, QPushButton, QTableWidget, QTableWidgetItem,
                                QAbstractItemView, QMessageBox, QSpacerItem, QSizePolicy)
 from PySide6.QtCore import Slot, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPixmap # Adicionado QPixmap
 import sqlite3
 from collections import defaultdict, Counter
 import re
 import statistics
 import math
+import io # Adicionado para buffer de imagem
+
+# Tentar importar matplotlib
+try:
+    import matplotlib
+    matplotlib.use('Agg') # Usar backend não interativo para evitar problemas de UI
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    print("AVISO: Matplotlib não encontrado. Sparklines não estarão disponíveis.")
+    # Definir plt como None para verificações posteriores
+    plt = None
 
 # Adiciona o diretório pai
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -25,8 +38,9 @@ from core.database import (get_db_connection, fetch_top3_for_meet,
 # Constante para a opção "Todos"
 ALL_FILTER = "Todos"
 
-# --- Funções Auxiliares ---
+# --- Funções Auxiliares (time_to_seconds, format_time_diff - sem alterações) ---
 def time_to_seconds(time_str):
+    # ... (código como antes) ...
     if not time_str: return None; time_str = time_str.strip()
     match_hr = re.match(r'(\d{1,2}):(\d{2}):(\d{2})\.(\d{1,2})$', time_str)
     match_min = re.match(r'(\d{1,2}):(\d{2})\.(\d{1,2})$', time_str)
@@ -41,6 +55,7 @@ def time_to_seconds(time_str):
     except (ValueError, TypeError): return None
 
 def format_time_diff(diff_seconds):
+    # ... (código como antes) ...
     if diff_seconds is None: return "N/A"
     if abs(diff_seconds) < 0.001: return "0.00s"
     sign = "+" if diff_seconds >= 0 else "-"; return f"{sign}{abs(diff_seconds):.2f}s"
@@ -48,6 +63,7 @@ def format_time_diff(diff_seconds):
 
 
 class ViewDataTab(QWidget):
+    # __init__, _populate_filters, _build_query_and_params (sem alterações no código fornecido anteriormente)
     def __init__(self, db_path, parent=None):
         super().__init__(parent)
         self.db_path = db_path
@@ -135,9 +151,53 @@ class ViewDataTab(QWidget):
         query_string += " ORDER BY m.start_date DESC, Atleta, e.number"
         return query_string, params
 
+    # --- NOVA FUNÇÃO: Gerar Sparkline ---
+    def _generate_sparkline_pixmap(self, lap_times, width_px=80, height_px=20):
+        """Gera um QPixmap de um sparkline para os tempos de volta."""
+        if not MATPLOTLIB_AVAILABLE or not lap_times:
+            return None
+
+        try:
+            # Criar figura pequena e sem bordas/padding
+            fig, ax = plt.subplots(figsize=(width_px / 72, height_px / 72), dpi=72) # Ajustar DPI se necessário
+            fig.subplots_adjust(left=0, right=1, top=1, bottom=0) # Remove padding
+
+            # Plotar os tempos de volta
+            ax.plot(range(len(lap_times)), lap_times, color='blue', linewidth=0.8)
+
+            # Opcional: Adicionar linha da média
+            if len(lap_times) > 0:
+                mean_time = statistics.mean(lap_times)
+                ax.axhline(mean_time, color='red', linestyle='--', linewidth=0.5)
+
+            # Remover eixos e bordas
+            ax.axis('off')
+
+            # Salvar em buffer
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', transparent=True) # Fundo transparente
+            buf.seek(0)
+
+            # Criar QPixmap
+            pixmap = QPixmap()
+            pixmap.loadFromData(buf.read())
+
+            plt.close(fig) # Fechar figura para liberar memória
+            return pixmap
+
+        except Exception as e:
+            print(f"Erro ao gerar sparkline: {e}")
+            # Tentar fechar a figura em caso de erro
+            try:
+                if 'fig' in locals() and fig:
+                    plt.close(fig)
+            except: pass # Ignora erros ao fechar
+            return None
+    # --- FIM DA NOVA FUNÇÃO ---
+
     @Slot()
     def _apply_filters(self):
-        """Executa a query filtrada, busca dados adicionais, calcula (média/DP por VOLTA CORRETA, status na colocação) e atualiza a tabela."""
+        """Executa a query filtrada, calcula dados (incluindo sparkline) e atualiza a tabela."""
         query_string, params = self._build_query_and_params()
         conn = None
         final_table_data = []
@@ -194,116 +254,116 @@ class ViewDataTab(QWidget):
                     if top2_secs is not None: diff2_str = format_time_diff(athlete_secs - top2_secs)
                     if top3_secs is not None: diff3_str = format_time_diff(athlete_secs - top3_secs)
 
-                # --- Calcular TEMPOS DE VOLTA (INCLUINDO ÚLTIMA), MÉDIA e DP ---
+                # Calcular TEMPOS DE VOLTA, MÉDIA e DP
                 cumulative_splits_sec = splits_lookup.get(result_id, [])
-                lap_times_sec = []
+                lap_times_sec = [] # <<< Armazenar tempos de volta aqui
                 media_lap_str = "N/A"; dp_lap_str = "N/A"
                 last_cumulative_split = 0.0
 
-                print(f"DEBUG [ViewData]: Parciais Acumuladas (sec): {cumulative_splits_sec}") # DEBUG
-
                 if cumulative_splits_sec:
                     previous_split_sec = 0.0
-                    print("DEBUG [ViewData]: Calculando voltas intermediárias...") # DEBUG
-                    for i, current_split_sec in enumerate(cumulative_splits_sec):
+                    for current_split_sec in cumulative_splits_sec:
                         lap_time = current_split_sec - previous_split_sec
-                        print(f"  DEBUG [ViewData]: Volta {i+1}: Acumulado={current_split_sec:.2f}, Anterior={previous_split_sec:.2f}, Tempo Volta={lap_time:.2f}") # DEBUG
-                        if lap_time >= 0:
-                            lap_times_sec.append(lap_time)
-                        else:
-                            print(f"  DEBUG [ViewData]: AVISO - Tempo de volta negativo ou zero ignorado: {lap_time:.2f}") # DEBUG
+                        if lap_time >= 0: lap_times_sec.append(lap_time)
                         previous_split_sec = current_split_sec
                     last_cumulative_split = previous_split_sec
-                    print(f"DEBUG [ViewData]: Última parcial acumulada (sec): {last_cumulative_split:.2f}") # DEBUG
 
-                # Calcular a última volta
-                print("DEBUG [ViewData]: Calculando última volta...") # DEBUG
                 if athlete_secs is not None and last_cumulative_split >= 0 and cumulative_splits_sec:
                     last_lap_time = athlete_secs - last_cumulative_split
-                    print(f"  DEBUG [ViewData]: Tempo Final={athlete_secs:.2f}, Última Parcial Acum.={last_cumulative_split:.2f}, Tempo Última Volta={last_lap_time:.2f}") # DEBUG
-                    if last_lap_time >= 0:
-                        lap_times_sec.append(last_lap_time)
-                    else:
-                        print(f"  DEBUG [ViewData]: AVISO - Tempo da última volta negativo ou zero ignorado: {last_lap_time:.2f}") # DEBUG
+                    if last_lap_time >= 0: lap_times_sec.append(last_lap_time)
                 elif not cumulative_splits_sec and athlete_secs is not None:
-                     print(f"  DEBUG [ViewData]: Sem parciais, usando tempo final como única volta: {athlete_secs:.2f}") # DEBUG
                      lap_times_sec.append(athlete_secs)
-                else:
-                    print("  DEBUG [ViewData]: Não foi possível calcular a última volta (sem tempo final ou sem parciais anteriores).") # DEBUG
 
-                print(f"DEBUG [ViewData]: Lista final de tempos de volta (sec): {lap_times_sec}") # DEBUG
-
-                if lap_times_sec: # Calcula estatísticas sobre os tempos das voltas
-                    try:
-                        media = statistics.mean(lap_times_sec)
-                        media_lap_str = f"{media:.2f}"
-                        print(f"DEBUG [ViewData]: Média calculada: {media:.2f}") # DEBUG
-                    except statistics.StatisticsError:
-                        media_lap_str = "N/A"
-                        print("DEBUG [ViewData]: Erro ao calcular média (StatisticsError)") # DEBUG
-
+                if lap_times_sec:
+                    try: media = statistics.mean(lap_times_sec); media_lap_str = f"{media:.2f}"
+                    except statistics.StatisticsError: media_lap_str = "N/A"
                     if len(lap_times_sec) >= 2:
-                        try:
+                        try: 
                             stdev = statistics.stdev(lap_times_sec);
-                            if not math.isnan(stdev):
-                                dp_lap_str = f"{stdev:.2f}"
-                                print(f"DEBUG [ViewData]: DP calculado: {stdev:.2f}") # DEBUG
-                            else:
-                                dp_lap_str = "0.00"
-                                print("DEBUG [ViewData]: DP é NaN, definido como 0.00") # DEBUG
-                        except statistics.StatisticsError:
+                            if not math.isnan(stdev): dp_lap_str = f"{stdev:.2f}"
+                            else: dp_lap_str = "0.00"
+                        except statistics.StatisticsError: 
                             dp_lap_str = "N/A"
-                            print("DEBUG [ViewData]: Erro ao calcular DP (StatisticsError)") # DEBUG
-                    elif len(lap_times_sec) == 1:
-                         dp_lap_str = "0.00"
-                         print("DEBUG [ViewData]: Apenas 1 volta, DP definido como 0.00") # DEBUG
-                else:
-                    print("DEBUG [ViewData]: Lista de tempos de volta vazia, estatísticas definidas como N/A") # DEBUG
-                # --- Fim do Cálculo ---
+                    elif len(lap_times_sec) == 1: dp_lap_str = "0.00"
 
-                # Montar dicionário para a linha da tabela final (sem Status)
+                # Montar dicionário para a linha da tabela final (com Lap Times)
                 final_table_data.append({
                     "Atleta": row[athlete_idx], "AnoNasc": row[birth_idx], "Prova": row[event_idx],
-                    "Colocação": display_colocacao,
-                    "Tempo": athlete_time_str or "N/A",
-                    "Média Lap": media_lap_str,
-                    "DP Lap": dp_lap_str,
+                    "Colocação": display_colocacao, "Tempo": athlete_time_str or "N/A",
+                    "Média Lap": media_lap_str, "DP Lap": dp_lap_str,
+                    "Lap Times": lap_times_sec, # <<< Armazena a lista de tempos
                     "vs Top3": diff3_str, "vs Top2": diff2_str, "vs Top1": diff1_str
                 })
             # --- Fim do Processamento ---
 
             # --- Popular Tabela ---
-            # Define os cabeçalhos finais (sem Status)
+            # Define os cabeçalhos finais (com Ritmo Sparkline)
             display_headers = ["Atleta", "AnoNasc", "Prova", "Colocação", "Tempo",
-                               "Média Lap", "DP Lap",
+                               "Média Lap", "DP Lap", "Ritmo", # <<< Novo Cabeçalho
                                "vs Top3", "vs Top2", "vs Top1"]
 
             self._clear_table(); self.table_widget.setColumnCount(len(display_headers))
             self.table_widget.setHorizontalHeaderLabels(display_headers); self.table_widget.setRowCount(len(final_table_data))
             bold_font = QFont(); bold_font.setBold(True)
 
+            # Mapeamento de cabeçalho para chave do dicionário
+            header_to_key_map = {h: h for h in display_headers} # Inicializa
+            header_to_key_map["Ritmo"] = "Lap Times" # Coluna "Ritmo" usa dados de "Lap Times"
+
             for row_idx, row_dict in enumerate(final_table_data):
                 col_idx = 0; athlete_place_str = row_dict.get("Colocação", "")
-                for key in display_headers:
-                    value = row_dict.get(key, ""); item = QTableWidgetItem(str(value))
-                    # Aplica formatação
-                    if key == "vs Top1" and athlete_place_str == "1": item.setFont(bold_font)
-                    elif key == "vs Top2" and athlete_place_str == "2": item.setFont(bold_font)
-                    elif key == "vs Top3" and athlete_place_str == "3": item.setFont(bold_font)
-                    if key == "Colocação" and not value.isdigit() and value != "N/A": item.setForeground(Qt.GlobalColor.red)
-                    self.table_widget.setItem(row_idx, col_idx, item); col_idx += 1
+                for key in display_headers: # Itera sobre os cabeçalhos de exibição
+                    dict_key = header_to_key_map[key] # Pega a chave correta
+                    value = row_dict.get(dict_key, "") # Busca pelo valor usando a chave
+
+                    # --- Lógica para Sparkline ---
+                    if key == "Ritmo":
+                        # Remove widget antigo, se houver
+                        self.table_widget.setCellWidget(row_idx, col_idx, None)
+                        lap_times = value # O valor aqui é a lista lap_times_sec
+                        pixmap = self._generate_sparkline_pixmap(lap_times)
+                        if pixmap:
+                            label = QLabel()
+                            label.setPixmap(pixmap)
+                            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                            self.table_widget.setCellWidget(row_idx, col_idx, label)
+                        else:
+                            # Se não gerou pixmap, coloca N/A como texto
+                            item = QTableWidgetItem("N/A")
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                            self.table_widget.setItem(row_idx, col_idx, item)
+                    # --- Fim da Lógica Sparkline ---
+                    else:
+                        # Para outras colunas, usa QTableWidgetItem
+                        # Remove widget antigo, se houver (caso a coluna mude de tipo)
+                        self.table_widget.setCellWidget(row_idx, col_idx, None)
+                        item = QTableWidgetItem(str(value))
+                        # Aplica formatação
+                        if key == "vs Top1" and athlete_place_str == "1": item.setFont(bold_font)
+                        elif key == "vs Top2" and athlete_place_str == "2": item.setFont(bold_font)
+                        elif key == "vs Top3" and athlete_place_str == "3": item.setFont(bold_font)
+                        if key == "Colocação" and not str(value).isdigit() and str(value) != "N/A": item.setForeground(Qt.GlobalColor.red)
+                        self.table_widget.setItem(row_idx, col_idx, item)
+
+                    col_idx += 1
             # --- Fim da População ---
 
             self.table_widget.resizeColumnsToContents()
+            # Ajustar largura da coluna Sparkline manualmente se necessário
+            try:
+                sparkline_col_index = display_headers.index("Ritmo")
+                self.table_widget.setColumnWidth(sparkline_col_index, 90) # Ajustar largura
+            except ValueError:
+                pass # Coluna não encontrada
 
         except sqlite3.Error as e: QMessageBox.critical(self, "Erro de Consulta", f"Erro ao executar consulta/processamento:\n{e}"); self._clear_table()
         except Exception as e: QMessageBox.critical(self, "Erro Inesperado", f"Ocorreu um erro inesperado ao aplicar filtros:\n{e}"); import traceback; print(traceback.format_exc()); self._clear_table()
         finally:
             if conn: conn.close()
 
+    # refresh_data, _clear_table (sem alterações no código fornecido anteriormente)
     @Slot()
     def refresh_data(self):
-        """Atualiza os filtros e reaplica a filtragem atual."""
         print("ViewDataTab: Recebido sinal para refresh_data.")
         current_filters = {'athlete': self.combo_athlete.currentData(), 'meet': self.combo_meet.currentData(), 'event': self.combo_event.currentText(), 'course': self.combo_course.currentText(), 'birth_year': self.combo_birth_year.currentText(),}
         self._populate_filters()

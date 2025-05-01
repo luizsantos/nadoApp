@@ -1,22 +1,34 @@
 # NadosApp/widgets/meet_summary_tab.py
 import sys
 import os
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, # Adicionado QLabel
                                QComboBox, QTableWidget, QTableWidgetItem,
                                QAbstractItemView, QMessageBox, QSpacerItem,
                                QSizePolicy, QTextEdit, QPushButton,
                                QFileDialog)
 from PySide6.QtCore import Slot, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPixmap # Adicionado QPixmap
 import sqlite3
 from collections import defaultdict, Counter
 import re
-import statistics # Importar statistics
-import math     # Importar math (para isnan)
+import statistics
+import math
+import io # Adicionado para buffer de imagem
+
+# Tentar importar matplotlib
+try:
+    import matplotlib
+    matplotlib.use('Agg') # Usar backend não interativo
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    print("AVISO: Matplotlib não encontrado. Sparklines não estarão disponíveis.")
+    plt = None
 
 # Imports do ReportLab
 try:
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Preformatted
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image # Adicionado Image
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
     from reportlab.lib.units import inch, cm
@@ -25,18 +37,15 @@ try:
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
-    # Definir classes dummy se reportlab não estiver instalado
-    class SimpleDocTemplate: pass
-    class Paragraph: pass
-    class Spacer: pass
+    # Definir classes dummy
+    class SimpleDocTemplate: pass; 
+    class Paragraph: pass; 
+    class Spacer: pass; 
     class Table: pass
-    class TableStyle: pass
-    class Preformatted: pass
+    class TableStyle: pass; 
+    class Image: pass; 
     def getSampleStyleSheet(): return {}
-    TA_LEFT = 0; TA_CENTER = 1; TA_RIGHT = 2
-    inch = 72; cm = inch / 2.54
-    A4 = (0,0)
-    colors = None
+    TA_LEFT = 0; TA_CENTER = 1; TA_RIGHT = 2; inch = 72; cm = inch / 2.54; A4 = (0,0); colors = None
 
 # Adiciona o diretório pai
 script_dir = os.path.dirname(os.path.abspath(__file__)); parent_dir = os.path.dirname(script_dir)
@@ -50,8 +59,9 @@ from core.database import (get_db_connection, fetch_all_meets_for_edit,
 # Constante SELECT_PROMPT
 SELECT_PROMPT = "--- Selecione uma Competição ---"
 
-# Funções auxiliares time_to_seconds e format_time_diff
+# --- Funções Auxiliares (time_to_seconds, format_time_diff - sem alterações) ---
 def time_to_seconds(time_str):
+    # ... (código como antes) ...
     if not time_str: return None; time_str = time_str.strip()
     match_hr = re.match(r'(\d{1,2}):(\d{2}):(\d{2})\.(\d{1,2})$', time_str)
     match_min = re.match(r'(\d{1,2}):(\d{2})\.(\d{1,2})$', time_str)
@@ -66,12 +76,15 @@ def time_to_seconds(time_str):
     except (ValueError, TypeError): return None
 
 def format_time_diff(diff_seconds):
+    # ... (código como antes) ...
     if diff_seconds is None: return "N/A"
     if abs(diff_seconds) < 0.001: return "0.00s"
     sign = "+" if diff_seconds >= 0 else "-"; return f"{sign}{abs(diff_seconds):.2f}s"
+# --- Fim das Funções Auxiliares ---
 
 
 class MeetSummaryTab(QWidget):
+    # __init__, _populate_meet_combo, _on_meet_selected (sem alterações)
     def __init__(self, db_path, parent=None):
         super().__init__(parent)
         self.db_path = db_path; self.current_meet_id = None; self.last_summary_data = None; self.last_meet_name = ""
@@ -80,7 +93,13 @@ class MeetSummaryTab(QWidget):
         self.combo_select_meet.addItem(SELECT_PROMPT, userData=None); self.combo_select_meet.currentIndexChanged.connect(self._on_meet_selected)
         select_layout.addWidget(self.combo_select_meet, 1); self.btn_export_pdf = QPushButton("Exportar para PDF")
         self.btn_export_pdf.clicked.connect(self._export_to_pdf); self.btn_export_pdf.setEnabled(False)
-        if not REPORTLAB_AVAILABLE: self.btn_export_pdf.setEnabled(False); self.btn_export_pdf.setToolTip("'reportlab' não encontrada.")
+        if not REPORTLAB_AVAILABLE or not MATPLOTLIB_AVAILABLE: # Desabilita exportação se faltar algo
+             self.btn_export_pdf.setEnabled(False)
+             tooltip = []
+             if not REPORTLAB_AVAILABLE: tooltip.append("'reportlab' não encontrada.")
+             if not MATPLOTLIB_AVAILABLE: tooltip.append("'matplotlib' não encontrado.")
+             self.btn_export_pdf.setToolTip("\n".join(tooltip))
+
         top_bar_layout.addLayout(select_layout, 4); top_bar_layout.addWidget(self.btn_export_pdf, 1); self.main_layout.addLayout(top_bar_layout)
         summary_grid = QGridLayout(); summary_grid.setContentsMargins(10, 10, 10, 10); summary_grid.setSpacing(15)
         summary_grid.addWidget(QLabel("<b>Medalhas Totais (Clube):</b>"), 0, 0, Qt.AlignmentFlag.AlignTop)
@@ -118,10 +137,12 @@ class MeetSummaryTab(QWidget):
         self.current_meet_id = self.combo_select_meet.itemData(index); self.last_meet_name = self.combo_select_meet.itemText(index)
         if self.current_meet_id is None: self._clear_summary(); self.btn_export_pdf.setEnabled(False); return
         print(f"MeetSummaryTab: Selecionado Meet ID: {self.current_meet_id}"); self._generate_and_display_summary()
-        self.btn_export_pdf.setEnabled(REPORTLAB_AVAILABLE)
+        # Habilita exportação apenas se ambas as bibliotecas estiverem disponíveis
+        self.btn_export_pdf.setEnabled(REPORTLAB_AVAILABLE and MATPLOTLIB_AVAILABLE)
+
 
     def _generate_and_display_summary(self):
-        """Busca dados, processa (incluindo média/DP por VOLTA CORRETA, status na colocação) e exibe o resumo."""
+        """Busca dados, processa (incluindo média/DP por VOLTA, status na colocação) e exibe o resumo."""
         if self.current_meet_id is None: return
         self.last_summary_data = None; conn = None
         try:
@@ -180,81 +201,46 @@ class MeetSummaryTab(QWidget):
                     if top2_secs is not None: diff2_str = format_time_diff(athlete_secs - top2_secs)
                     if top3_secs is not None: diff3_str = format_time_diff(athlete_secs - top3_secs)
 
-                # --- Calcular TEMPOS DE VOLTA (INCLUINDO ÚLTIMA), MÉDIA e DP ---
+                # Calcular TEMPOS DE VOLTA, MÉDIA e DP
                 cumulative_splits_sec = splits_lookup.get(result_id, [])
-                lap_times_sec = []
+                lap_times_sec = [] # <<< Armazenar tempos de volta aqui
                 media_lap_str = "N/A"; dp_lap_str = "N/A"
                 last_cumulative_split = 0.0
 
-                print(f"DEBUG: Parciais Acumuladas (sec): {cumulative_splits_sec}") # DEBUG
-
                 if cumulative_splits_sec:
                     previous_split_sec = 0.0
-                    print("DEBUG: Calculando voltas intermediárias...") # DEBUG
-                    for i, current_split_sec in enumerate(cumulative_splits_sec):
+                    for current_split_sec in cumulative_splits_sec:
                         lap_time = current_split_sec - previous_split_sec
-                        print(f"  DEBUG: Volta {i+1}: Acumulado={current_split_sec:.2f}, Anterior={previous_split_sec:.2f}, Tempo Volta={lap_time:.2f}") # DEBUG
-                        if lap_time >= 0:
-                            lap_times_sec.append(lap_time)
-                        else:
-                            print(f"  DEBUG: AVISO - Tempo de volta negativo ou zero ignorado: {lap_time:.2f}") # DEBUG
+                        if lap_time >= 0: lap_times_sec.append(lap_time)
                         previous_split_sec = current_split_sec
                     last_cumulative_split = previous_split_sec
-                    print(f"DEBUG: Última parcial acumulada (sec): {last_cumulative_split:.2f}") # DEBUG
 
-                # Calcular a última volta
-                print("DEBUG: Calculando última volta...") # DEBUG
                 if athlete_secs is not None and last_cumulative_split >= 0 and cumulative_splits_sec:
                     last_lap_time = athlete_secs - last_cumulative_split
-                    print(f"  DEBUG: Tempo Final={athlete_secs:.2f}, Última Parcial Acum.={last_cumulative_split:.2f}, Tempo Última Volta={last_lap_time:.2f}") # DEBUG
-                    if last_lap_time >= 0:
-                        lap_times_sec.append(last_lap_time)
-                    else:
-                        print(f"  DEBUG: AVISO - Tempo da última volta negativo ou zero ignorado: {last_lap_time:.2f}") # DEBUG
+                    if last_lap_time >= 0: lap_times_sec.append(last_lap_time)
                 elif not cumulative_splits_sec and athlete_secs is not None:
-                     print(f"  DEBUG: Sem parciais, usando tempo final como única volta: {athlete_secs:.2f}") # DEBUG
                      lap_times_sec.append(athlete_secs)
-                else:
-                    print("  DEBUG: Não foi possível calcular a última volta (sem tempo final ou sem parciais anteriores).") # DEBUG
 
-                print(f"DEBUG: Lista final de tempos de volta (sec): {lap_times_sec}") # DEBUG
-
-                if lap_times_sec: # Calcula estatísticas sobre os tempos das voltas
-                    try:
-                        media = statistics.mean(lap_times_sec)
-                        media_lap_str = f"{media:.2f}"
-                        print(f"DEBUG: Média calculada: {media:.2f}") # DEBUG
-                    except statistics.StatisticsError:
-                        media_lap_str = "N/A"
-                        print("DEBUG: Erro ao calcular média (StatisticsError)") # DEBUG
-
+                if lap_times_sec:
+                    try: media = statistics.mean(lap_times_sec); media_lap_str = f"{media:.2f}"
+                    except statistics.StatisticsError: media_lap_str = "N/A"
                     if len(lap_times_sec) >= 2:
-                        try:
+                        try: 
                             stdev = statistics.stdev(lap_times_sec);
-                            if not math.isnan(stdev):
-                                dp_lap_str = f"{stdev:.2f}"
-                                print(f"DEBUG: DP calculado: {stdev:.2f}") # DEBUG
-                            else:
-                                dp_lap_str = "0.00"
-                                print("DEBUG: DP é NaN, definido como 0.00") # DEBUG
-                        except statistics.StatisticsError:
+                            if not math.isnan(stdev): dp_lap_str = f"{stdev:.2f}"
+                            else: dp_lap_str = "0.00"
+                        except statistics.StatisticsError: 
                             dp_lap_str = "N/A"
-                            print("DEBUG: Erro ao calcular DP (StatisticsError)") # DEBUG
-                    elif len(lap_times_sec) == 1:
-                         dp_lap_str = "0.00"
-                         print("DEBUG: Apenas 1 volta, DP definido como 0.00") # DEBUG
-                else:
-                    print("DEBUG: Lista de tempos de volta vazia, estatísticas definidas como N/A") # DEBUG
-                # --- Fim do Cálculo ---
+                    elif len(lap_times_sec) == 1: dp_lap_str = "0.00"
 
-
-                # Adiciona os dados ao dicionário (sem Status)
+                # Adiciona os dados ao dicionário (com Lap Times)
                 athlete_table_data.append({
                     "Atleta": athlete_name, "AnoNasc": row[birth_idx], "Prova": event_desc,
                     "Colocação": display_colocacao,
                     "Tempo": athlete_time_str or "N/A",
                     "Média Lap": media_lap_str,
                     "DP Lap": dp_lap_str,
+                    "Lap Times": lap_times_sec, # <<< Armazena a lista de tempos
                     "vs Top3": diff3_str, "vs Top2": diff2_str, "vs Top1": diff1_str
                 })
 
@@ -275,9 +261,8 @@ class MeetSummaryTab(QWidget):
             # Certifique-se que a linha abaixo existe e está correta:
             self.txt_medals_per_event.setPlainText(medals_event_str or "Nenhuma medalha encontrada.")
             # --- FIM DA VERIFICAÇÃO ---
-
             
-            self._update_athlete_table(athlete_table_data)
+            self._update_athlete_table(athlete_table_data) # Chama o método atualizado
 
             # Guarda os dados processados para exportação
             self.last_summary_data = {"gold": gold_count, "silver": silver_count, "bronze": bronze_count, "athletes_per_event_str": athletes_event_str or "Nenhum atleta encontrado.", "medals_per_event_str": medals_event_str or "Nenhuma medalha encontrada.", "athlete_details": athlete_table_data}
@@ -287,28 +272,89 @@ class MeetSummaryTab(QWidget):
         finally:
             if conn: conn.close()
 
+    # --- NOVA FUNÇÃO: Gerar Sparkline (copiada de view_data_tab) ---
+    def _generate_sparkline_pixmap(self, lap_times, width_px=80, height_px=20):
+        """Gera um QPixmap de um sparkline para os tempos de volta."""
+        if not MATPLOTLIB_AVAILABLE or not lap_times:
+            return None
+        try:
+            fig, ax = plt.subplots(figsize=(width_px / 72, height_px / 72), dpi=72)
+            fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+            ax.plot(range(len(lap_times)), lap_times, color='blue', linewidth=1.0)
+            if len(lap_times) > 0:
+                mean_time = statistics.mean(lap_times)
+                ax.axhline(mean_time, color='red', linestyle='--', linewidth=0.5)
+            ax.axis('off')
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', transparent=True)
+            buf.seek(0)
+            pixmap = QPixmap()
+            pixmap.loadFromData(buf.read())
+            plt.close(fig)
+            return pixmap
+        except Exception as e:
+            print(f"Erro ao gerar sparkline: {e}")
+            try:
+                if 'fig' in locals() and fig: plt.close(fig)
+            except: pass
+            return None
+    # --- FIM DA NOVA FUNÇÃO ---
+
     def _update_athlete_table(self, table_data):
-        """Popula a tabela de detalhes dos atletas, com status na colocação e média/DP por volta."""
+        """Popula a tabela de detalhes dos atletas, incluindo sparkline."""
         self.table_athletes.setRowCount(0);
         if not table_data: return
-        # Cabeçalhos sem Status
+        # Cabeçalhos com "Ritmo"
         headers = ["Atleta", "AnoNasc", "Prova", "Colocação", "Tempo",
-                   "Média Lap", "DP Lap",
+                   "Média Lap", "DP Lap", "Ritmo", # <<< Novo Cabeçalho
                    "vs Top3", "vs Top2", "vs Top1"]
         self.table_athletes.setColumnCount(len(headers)); self.table_athletes.setHorizontalHeaderLabels(headers)
         self.table_athletes.setRowCount(len(table_data)); bold_font = QFont(); bold_font.setBold(True)
+
+        # Mapeamento de cabeçalho para chave do dicionário
+        header_to_key_map = {h: h for h in headers}
+        header_to_key_map["Ritmo"] = "Lap Times"
+
         for row_idx, row_dict in enumerate(table_data):
             col_idx = 0; athlete_place_str = row_dict.get("Colocação", "")
             for key in headers:
-                value = row_dict.get(key, ""); item = QTableWidgetItem(str(value))
-                # Lógica de negrito
-                if key == "vs Top1" and athlete_place_str == "1": item.setFont(bold_font)
-                elif key == "vs Top2" and athlete_place_str == "2": item.setFont(bold_font)
-                elif key == "vs Top3" and athlete_place_str == "3": item.setFont(bold_font)
-                # Lógica de cor para Colocação
-                if key == "Colocação" and not value.isdigit() and value != "N/A": item.setForeground(Qt.GlobalColor.red)
-                self.table_athletes.setItem(row_idx, col_idx, item); col_idx += 1
+                dict_key = header_to_key_map[key]
+                value = row_dict.get(dict_key, "")
+
+                # --- Lógica para Sparkline ---
+                if key == "Ritmo":
+                    self.table_athletes.setCellWidget(row_idx, col_idx, None) # Limpa célula
+                    lap_times = value # Lista de tempos
+                    pixmap = self._generate_sparkline_pixmap(lap_times)
+                    if pixmap:
+                        label = QLabel()
+                        label.setPixmap(pixmap)
+                        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                        self.table_athletes.setCellWidget(row_idx, col_idx, label)
+                    else:
+                        item = QTableWidgetItem("N/A")
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        self.table_athletes.setItem(row_idx, col_idx, item)
+                # --- Fim da Lógica Sparkline ---
+                else:
+                    # Outras colunas
+                    self.table_athletes.setCellWidget(row_idx, col_idx, None) # Limpa célula
+                    item = QTableWidgetItem(str(value))
+                    # Formatação
+                    if key == "vs Top1" and athlete_place_str == "1": item.setFont(bold_font)
+                    elif key == "vs Top2" and athlete_place_str == "2": item.setFont(bold_font)
+                    elif key == "vs Top3" and athlete_place_str == "3": item.setFont(bold_font)
+                    if key == "Colocação" and not str(value).isdigit() and str(value) != "N/A": item.setForeground(Qt.GlobalColor.red)
+                    self.table_athletes.setItem(row_idx, col_idx, item)
+
+                col_idx += 1
+
         self.table_athletes.resizeColumnsToContents()
+        # Ajustar largura da coluna Sparkline
+        try:
+            sparkline_col_index = headers.index("Ritmo")
+            self.table_athletes.setColumnWidth(sparkline_col_index, 90)
+        except ValueError: pass
 
     def _clear_summary(self):
         self.lbl_medals_gold.setText("Ouro: 0"); self.lbl_medals_silver.setText("Prata: 0"); self.lbl_medals_bronze.setText("Bronze: 0")
@@ -319,10 +365,41 @@ class MeetSummaryTab(QWidget):
     def refresh_data(self):
         print("MeetSummaryTab: Recebido sinal para refresh_data."); self._populate_meet_combo()
 
+    # --- NOVA FUNÇÃO: Gerar Sparkline para PDF ---
+    def _generate_sparkline_pdf_image(self, lap_times, width_px=80, height_px=20):
+        """Gera dados de imagem PNG de um sparkline para o PDF."""
+        if not MATPLOTLIB_AVAILABLE or not lap_times:
+            return None
+        try:
+            fig, ax = plt.subplots(figsize=(width_px / 72, height_px / 72), dpi=72)
+            fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+            ax.plot(range(len(lap_times)), lap_times, color='blue', linewidth=2)
+            if len(lap_times) > 0:
+                mean_time = statistics.mean(lap_times)
+                ax.axhline(mean_time, color='red', linestyle='--', linewidth=1.5)
+            ax.axis('off')
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', transparent=True)
+            plt.close(fig)
+            buf.seek(0)
+            return buf # Retorna o buffer BytesIO
+        except Exception as e:
+            print(f"Erro ao gerar sparkline para PDF: {e}")
+            try:
+                if 'fig' in locals() and fig: plt.close(fig)
+            except: pass
+            return None
+    # --- FIM DA NOVA FUNÇÃO ---
+
     @Slot()
     def _export_to_pdf(self):
-        """Exporta o resumo atual para PDF, com status na colocação e média/DP por volta."""
-        if not REPORTLAB_AVAILABLE: QMessageBox.warning(self, "Indisponível", "'reportlab' não encontrada."); return
+        """Exporta o resumo atual para PDF, incluindo sparkline."""
+        if not REPORTLAB_AVAILABLE or not MATPLOTLIB_AVAILABLE:
+             tooltip = []
+             if not REPORTLAB_AVAILABLE: tooltip.append("'reportlab' não encontrada.")
+             if not MATPLOTLIB_AVAILABLE: tooltip.append("'matplotlib' não encontrado.")
+             QMessageBox.warning(self, "Funcionalidade Indisponível", "\n".join(tooltip))
+             return
         if self.current_meet_id is None or self.last_summary_data is None: QMessageBox.warning(self, "Nenhum Dado", "Selecione e gere o resumo."); return
         default_filename = re.sub(r'[\\/*?:"<>|]', "", self.last_meet_name.split('(')[0].strip()); default_filename = f"Resumo_{default_filename}.pdf"
         fileName, _ = QFileDialog.getSaveFileName(self, "Salvar PDF", default_filename, "PDF (*.pdf)");
@@ -350,45 +427,66 @@ class MeetSummaryTab(QWidget):
             story.append(Paragraph("<b>Detalhes dos Atletas na Competição</b>", heading_style)); story.append(Spacer(1, 0.2*cm))
 
             table_content = []
-            # Cabeçalhos PDF sem Status
+            # Cabeçalhos PDF com "Ritmo"
             pdf_headers = ["Atleta", "Nasc", "Prova", "Col", "Tempo",
-                           "Média Lap", "DP Lap",
+                           "Média Lap", "DP Lap", "Ritmo", # <<< Novo
                            "vs Top3", "vs Top2", "vs Top1"]
-            # Mapeamento sem Status
+            # Mapeamento com "Ritmo" -> "Lap Times"
             header_to_key_map = {
                 "Atleta": "Atleta", "Nasc": "AnoNasc", "Prova": "Prova", "Col": "Colocação",
                 "Tempo": "Tempo", "Média Lap": "Média Lap", "DP Lap": "DP Lap",
+                "Ritmo": "Lap Times", # <<< Novo
                 "vs Top3": "vs Top3", "vs Top2": "vs Top2", "vs Top1": "vs Top1"
             }
-            header_style = styles['Normal']; header_style.fontSize = 10
+            header_style = styles['Normal']; header_style.fontSize = 9
             table_content.append([Paragraph(f"<b>{h}</b>", header_style) for h in pdf_headers])
 
             athlete_details = self.last_summary_data['athlete_details']
-            body_style = styles['Normal']; body_style.fontSize = 10
+            body_style = styles['Normal']; body_style.fontSize = 8
+            # Definir tamanho da imagem no PDF
+            sparkline_pdf_width = 2.0*cm
+            sparkline_pdf_height = 0.5*cm
+
             for row_idx, row_dict in enumerate(athlete_details):
                 row_list = []; pdf_row = row_idx + 1
                 for h in pdf_headers:
-                    dict_key = header_to_key_map[h]; cell_text = str(row_dict.get(dict_key, ""))
-                    is_bold = False; athlete_place_str = row_dict.get("Colocação", "")
-                    if (h == "vs Top1" and athlete_place_str == "1") or \
-                       (h == "vs Top2" and athlete_place_str == "2") or \
-                       (h == "vs Top3" and athlete_place_str == "3"):
-                        is_bold = True
-                    cell_paragraph = Paragraph(f"<b>{cell_text}</b>" if is_bold else cell_text, body_style);
-                    row_list.append(cell_paragraph)
+                    dict_key = header_to_key_map[h]; value = row_dict.get(dict_key, "")
+
+                    # --- Lógica para Sparkline no PDF ---
+                    if h == "Ritmo":
+                        lap_times = value # Lista de tempos
+                        image_buffer = self._generate_sparkline_pdf_image(lap_times, width_px=int(sparkline_pdf_width / cm * 72), height_px=int(sparkline_pdf_height / cm * 72))
+                        if image_buffer:
+                            # Cria objeto Image do ReportLab
+                            img = Image(image_buffer, width=sparkline_pdf_width, height=sparkline_pdf_height)
+                            row_list.append(img)
+                        else:
+                            row_list.append(Paragraph("N/A", body_style)) # Fallback
+                    # --- Fim da Lógica Sparkline PDF ---
+                    else:
+                        # Outras colunas
+                        cell_text = str(value)
+                        is_bold = False; athlete_place_str = row_dict.get("Colocação", "")
+                        if (h == "vs Top1" and athlete_place_str == "1") or \
+                           (h == "vs Top2" and athlete_place_str == "2") or \
+                           (h == "vs Top3" and athlete_place_str == "3"):
+                            is_bold = True
+                        cell_paragraph = Paragraph(f"<b>{cell_text}</b>" if is_bold else cell_text, body_style);
+                        row_list.append(cell_paragraph)
                 table_content.append(row_list)
 
             if table_content:
                 available_width = page_width - left_margin - right_margin
-                # Larguras sem Status, ajustadas
+                # Ajustar larguras das colunas
                 col_widths = [
-                    4.5*cm,  # Atleta
-                    1.5*cm,  # Nasc
-                    3.5*cm,  # Prova
-                    1.0*cm,  # Col
+                    3.0*cm,  # Atleta
+                    1.2*cm,  # Nasc
+                    2.0*cm,  # Prova
+                    1.2*cm,  # Col
                     2.0*cm,  # Tempo
                     1.5*cm,  # Média Lap
-                    1.5*cm,  # DP Lap
+                    1.0*cm,  # DP Lap
+                    sparkline_pdf_width + 0.2*cm, # Ritmo (largura da imagem + margem)
                     1.5*cm,  # vs Top3
                     1.5*cm,  # vs Top2
                     1.5*cm   # vs Top1
@@ -401,11 +499,10 @@ class MeetSummaryTab(QWidget):
                 # Estilos
                 style = TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), # VALIGN MIDDLE para imagem
                     ('ALIGN', (0, 1), (0, -1), 'LEFT'), ('ALIGN', (2, 1), (2, -1), 'LEFT'),
                     ('BOTTOMPADDING', (0, 0), (-1, 0), 6), ('TOPPADDING', (0, 0), (-1, 0), 6),
                     ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    # ('FONTSIZE', (0, 0), (-1, -1), 10), # Removido
                     ('TOPPADDING', (0, 1), (-1, -1), 2), ('BOTTOMPADDING', (0, 1), (-1, -1), 2),
                 ])
                 # Linhas alternadas
