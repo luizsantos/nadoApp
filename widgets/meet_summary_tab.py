@@ -4,7 +4,7 @@ import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, # Adicionado QLabel
                                QComboBox, QTableWidget, QTableWidgetItem,
                                QAbstractItemView, QMessageBox, QSpacerItem,
-                               QSizePolicy, QTextEdit, QPushButton, QDialog, # Adicionado QDialog
+                                QSizePolicy, QTextEdit, QPushButton, QDialog, QCheckBox, # Adicionado QDialog e QCheckBox
                                QFileDialog, QScrollArea) # Adicionado QScrollArea
 from PySide6.QtCore import Slot, Qt
 from PySide6.QtGui import QFont, QPixmap # Adicionado QPixmap
@@ -16,6 +16,15 @@ import math
 import io # Adicionado para buffer de imagem
 from datetime import datetime # Garante que o import está aqui
 import numpy as np # Adicionado para gráfico de radar
+import csv # Adicionado para exportar CSV
+import os # Para chave de API
+
+# --- OpenAI Setup ---
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
 
 # Tentar importar matplotlib
 try:
@@ -130,7 +139,30 @@ class MeetSummaryTab(QWidget):
         select_layout.addWidget(QLabel("Selecionar Competição:")); self.combo_select_meet = QComboBox()
         self.combo_select_meet.addItem(SELECT_PROMPT, userData=None); self.combo_select_meet.currentIndexChanged.connect(self._on_meet_selected)
         select_layout.addWidget(self.combo_select_meet, 1); self.btn_export_pdf = QPushButton("Exportar para PDF")
-        self.btn_export_pdf.clicked.connect(self._export_to_pdf); self.btn_export_pdf.setEnabled(False)
+        self.btn_export_pdf.clicked.connect(self._export_to_pdf); self.btn_export_pdf.setEnabled(False); self.btn_export_pdf.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding) # Ocupa altura
+
+        # Botão Exportar CSV
+        self.btn_export_csv = QPushButton("Exportar Tabela para CSV")
+        self.btn_export_csv.clicked.connect(self._export_table_to_csv); self.btn_export_csv.setEnabled(False); self.btn_export_csv.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+
+
+        # Layout para opções de exportação PDF
+        pdf_options_layout = QVBoxLayout()
+        pdf_options_layout.addWidget(QLabel("Opções PDF:"))
+        self.check_pdf_bar = QCheckBox("Incluir Gráfico Barras")
+        self.check_pdf_bar.setChecked(True) # Padrão: Habilitado
+        self.check_pdf_scatter = QCheckBox("Incluir Gráfico Dispersão")
+        self.check_pdf_scatter.setChecked(True) # Padrão: Habilitado
+        self.check_pdf_ai = QCheckBox("Incluir Análise IA")
+        self.check_pdf_ai.setChecked(False) # Padrão: Desabilitado
+        if not OPENAI_AVAILABLE: # Desabilita se IA não estiver disponível
+            self.check_pdf_ai.setEnabled(False)
+            self.check_pdf_ai.setToolTip("Biblioteca OpenAI não encontrada.")
+        pdf_options_layout.addWidget(self.check_pdf_bar)
+        pdf_options_layout.addWidget(self.check_pdf_scatter)
+        pdf_options_layout.addWidget(self.check_pdf_ai)
+        pdf_options_layout.addStretch()
+        
         if not REPORTLAB_AVAILABLE or not MATPLOTLIB_AVAILABLE: # Desabilita exportação se faltar algo
              self.btn_export_pdf.setEnabled(False)
              tooltip = []
@@ -138,8 +170,13 @@ class MeetSummaryTab(QWidget):
              if not MATPLOTLIB_AVAILABLE: tooltip.append("'matplotlib' não encontrado.")
              self.btn_export_pdf.setToolTip("\n".join(tooltip))
 
-        top_bar_layout.addLayout(select_layout, 4); top_bar_layout.addWidget(self.btn_export_pdf, 1); self.main_layout.addLayout(top_bar_layout)
-        
+        # Adiciona botões de exportação
+        top_bar_layout.addLayout(select_layout, 4); 
+        top_bar_layout.addWidget(self.btn_export_csv, 1); top_bar_layout.addWidget(self.btn_export_pdf, 1); 
+        # Adiciona opções PDF ao lado do botão exportar
+        top_bar_layout.addLayout(pdf_options_layout, 1)
+        self.main_layout.addLayout(top_bar_layout)
+
         summary_grid = QGridLayout(); summary_grid.setContentsMargins(10, 10, 10, 10); summary_grid.setSpacing(15)
         summary_grid.addWidget(QLabel("<b>Medalhas Totais (Clube):</b>"), 0, 0, Qt.AlignmentFlag.AlignTop)
         self.lbl_medals_gold = QLabel("Ouro: 0"); self.lbl_medals_silver = QLabel("Prata: 0"); self.lbl_medals_bronze = QLabel("Bronze: 0")
@@ -277,16 +314,19 @@ class MeetSummaryTab(QWidget):
     @Slot(int)
     def _on_meet_selected(self, index):
         self.current_meet_id = self.combo_select_meet.itemData(index); self.last_meet_name = self.combo_select_meet.itemText(index)
-        if self.current_meet_id is None: self._clear_summary(); self.btn_export_pdf.setEnabled(False); return
+        if self.current_meet_id is None: self._clear_summary(); self.btn_export_pdf.setEnabled(False); self.btn_export_csv.setEnabled(False); return
         print(f"MeetSummaryTab: Selecionado Meet ID: {self.current_meet_id}")
         summary_generated = self._generate_and_display_summary()
         if summary_generated:
             self._populate_event_graph_combo() # Popula combo de eventos para gráfico
             self._populate_scatter_event_combo() # Popula combo de eventos para scatter
         
+        # Habilita botões de exportação se resumo foi gerado e libs ok
+        pdf_export_enabled = summary_generated and REPORTLAB_AVAILABLE and MATPLOTLIB_AVAILABLE
+        csv_export_enabled = summary_generated # CSV só precisa que o resumo tenha sido gerado
         
-        # Habilita exportação apenas se ambas as bibliotecas estiverem disponíveis
-        self.btn_export_pdf.setEnabled(REPORTLAB_AVAILABLE and MATPLOTLIB_AVAILABLE)
+        self.btn_export_pdf.setEnabled(pdf_export_enabled)
+        self.btn_export_csv.setEnabled(csv_export_enabled) # <<< Habilita o botão CSV aqui
 
 
     def _generate_and_display_summary(self):
@@ -533,6 +573,7 @@ class MeetSummaryTab(QWidget):
         self.btn_generate_event_graph.setEnabled(False)
         self._clear_event_graph(show_placeholder=True)
         # Limpa também o scatter plot
+        self.btn_export_csv.setEnabled(False) # Desabilita botão CSV
         self._clear_scatter_plot(show_placeholder=True)
 
 
@@ -695,6 +736,60 @@ class MeetSummaryTab(QWidget):
         dialog = GraphPopupDialog(self.scatter_plot_figure, f"Dispersão - {selected_event}", self)
         dialog.show()
 
+    @Slot()
+    def _export_table_to_csv(self):
+        """Exporta os dados da tabela de detalhes dos atletas para um arquivo CSV."""
+        if not self.last_summary_data or 'athlete_details' not in self.last_summary_data or not self.last_summary_data['athlete_details']:
+            QMessageBox.warning(self, "Nenhum Dado", "Não há dados na tabela para exportar. Gere o resumo primeiro.")
+            return
+
+        # Define nome padrão do arquivo
+        default_filename = re.sub(r'[\\/*?:"<>|]', "", self.last_meet_name.split('(')[0].strip())
+        default_filename = f"Detalhes_Atletas_{default_filename}.csv"
+
+        fileName, _ = QFileDialog.getSaveFileName(self, "Salvar Tabela como CSV", default_filename, "CSV (*.csv)")
+        if not fileName:
+            return
+
+        try:
+            # Define os cabeçalhos para exportar (excluindo "Ritmo")
+            headers_to_export = ["Atleta", "AnoNasc", "Prova", "Colocação", "Tempo",
+                                 "Média Lap", "DP Lap", "Parciais",
+                                 "vs Top3", "vs Top2", "vs Top1"]
+
+            # Mapeamento de cabeçalho para chave do dicionário (reutiliza lógica)
+            header_to_key_map = {h: h for h in headers_to_export}
+            header_to_key_map["Parciais"] = "Lap Times" # Mapeia Parciais para os dados corretos
+
+            with open(fileName, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile, delimiter=';') # Usando ponto e vírgula como delimitador
+
+                # Escreve o cabeçalho
+                writer.writerow(headers_to_export)
+
+                # Escreve os dados
+                for row_dict in self.last_summary_data['athlete_details']:
+                    row_to_write = []
+                    for header in headers_to_export:
+                        dict_key = header_to_key_map[header]
+                        value = row_dict.get(dict_key, "")
+
+                        # Formata a coluna "Parciais" (que usa "Lap Times")
+                        if header == "Parciais":
+                            if isinstance(value, list) and value:
+                                value = "; ".join([f"{t:.2f}" for t in value]) # Usa ponto e vírgula aqui também
+                            else:
+                                value = "" # Deixa vazio se não houver parciais
+
+                        row_to_write.append(str(value)) # Converte tudo para string
+                    writer.writerow(row_to_write)
+
+            QMessageBox.information(self, "Exportação Concluída", f"Dados da tabela salvos com sucesso em:\n{fileName}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ao Exportar CSV", f"Ocorreu um erro ao salvar o arquivo CSV:\n{e}")
+            import traceback; print(traceback.format_exc())
+
 
     @Slot(int)
     def _on_scatter_event_selected(self, index):
@@ -817,6 +912,18 @@ class MeetSummaryTab(QWidget):
                 if line.strip(): story.append(Paragraph(line, normal_style))
             story.append(Spacer(1, 0.7*cm))
 
+            # --- Adicionar Análise IA ---
+            if self.check_pdf_ai.isChecked():
+                story.append(Paragraph("<b>Análise IA do Desempenho</b>", heading_style))
+                ai_analysis_text = self._get_ai_analysis(self.last_summary_data, self.last_meet_name)
+                # Divide a análise em parágrafos para melhor formatação no PDF
+                ai_paragraphs = ai_analysis_text.split('\n')
+                for para_text in ai_paragraphs:
+                     if para_text.strip(): # Adiciona apenas parágrafos não vazios
+                         story.append(Paragraph(para_text, normal_style))
+                story.append(Spacer(1, 0.7*cm))
+            # --- Fim Análise IA ---
+
             # 5. Tabela de Detalhes dos Atletas
             story.append(Paragraph("<b>Detalhes dos Atletas na Competição</b>", heading_style)); story.append(Spacer(1, 0.2*cm))
 
@@ -905,49 +1012,53 @@ class MeetSummaryTab(QWidget):
                 table.setStyle(style); story.append(table)
 
             # --- Adicionar Gráficos por Prova ao PDF ---
-            story.append(Spacer(1, 1.0*cm)) # Espaço antes dos gráficos
-            unique_events = sorted(list(set(item['Prova'] for item in athlete_details if item.get('Prova'))))
+            # Verifica se pelo menos um dos gráficos está selecionado
+            if self.check_pdf_bar.isChecked() or self.check_pdf_scatter.isChecked():
+                story.append(Spacer(1, 1.0*cm)) # Espaço antes dos gráficos
+                unique_events = sorted(list(set(item['Prova'] for item in athlete_details if item.get('Prova'))))
 
-            graph_heading_style = styles['h2'] # Usar H2 para mais destaque na página
-            # Define uma largura fixa para as imagens no PDF (ajuste conforme necessário)
-            img_width_pdf = 17*cm
+                graph_heading_style = styles['h2'] # Usar H2 para mais destaque na página
+                # Define uma largura fixa para as imagens no PDF (ajuste conforme necessário)
+                img_width_pdf = 17*cm
 
-            for i, event_name in enumerate(unique_events):
-                # Adiciona quebra de página ANTES de cada conjunto de gráficos
-                story.append(PageBreak())
-                story.append(Paragraph(f"Gráficos - {event_name}", graph_heading_style))
-                story.append(Spacer(1, 0.2*cm))
+                for i, event_name in enumerate(unique_events):
+                    # Adiciona quebra de página ANTES de cada conjunto de gráficos
+                    story.append(PageBreak())
+                    story.append(Paragraph(f"Gráficos - {event_name}", graph_heading_style))
+                    story.append(Spacer(1, 0.2*cm))
 
-                event_data_for_graph = [item for item in athlete_details if item.get('Prova') == event_name]
+                    event_data_for_graph = [item for item in athlete_details if item.get('Prova') == event_name]
 
-                # Gerar e adicionar gráfico de barras
-                bar_buffer = self._generate_pdf_bar_chart(event_name, event_data_for_graph)
-                if bar_buffer:
-                    try:
-                        # Usa largura fixa e calcula altura proporcional baseada no figsize
-                        img_bar = Image(bar_buffer, width=img_width_pdf, height=img_width_pdf * (4.5/7.0))
-                        img_bar.hAlign = 'CENTER'
-                        story.append(img_bar)
-                        story.append(Spacer(1, 0.5*cm))
-                    except Exception as img_err:
-                        print(f"Erro ao adicionar imagem do gráfico de barras para '{event_name}': {img_err}")
-                        story.append(Paragraph(f"(Erro ao gerar gráfico de barras para {event_name})", normal_style))
-                else:
-                    story.append(Paragraph(f"(Sem dados suficientes para gráfico de barras - {event_name})", normal_style))
+                    # Gerar e adicionar gráfico de barras (condicional)
+                    if self.check_pdf_bar.isChecked():
+                        bar_buffer = self._generate_pdf_bar_chart(event_name, event_data_for_graph)
+                        if bar_buffer:
+                            try:
+                                # Usa largura fixa e calcula altura proporcional baseada no figsize
+                                img_bar = Image(bar_buffer, width=img_width_pdf, height=img_width_pdf * (4.5/7.0))
+                                img_bar.hAlign = 'CENTER'
+                                story.append(img_bar)
+                                story.append(Spacer(1, 0.5*cm))
+                            except Exception as img_err:
+                                print(f"Erro ao adicionar imagem do gráfico de barras para '{event_name}': {img_err}")
+                                story.append(Paragraph(f"(Erro ao gerar gráfico de barras para {event_name})", normal_style))
+                        else:
+                            story.append(Paragraph(f"(Sem dados suficientes para gráfico de barras - {event_name})", normal_style))
 
-                # Gerar e adicionar gráfico de dispersão
-                scatter_buffer = self._generate_pdf_scatter_plot(event_name, event_data_for_graph)
-                if scatter_buffer:
-                    try:
-                        img_scatter = Image(scatter_buffer, width=img_width_pdf, height=img_width_pdf * (4.5/7.0))
-                        img_scatter.hAlign = 'CENTER'
-                        story.append(img_scatter)
-                    except Exception as img_err:
-                        print(f"Erro ao adicionar imagem do gráfico de dispersão para '{event_name}': {img_err}")
-                        story.append(Paragraph(f"(Erro ao gerar gráfico de dispersão para {event_name})", normal_style))
-                else:
-                     story.append(Paragraph(f"(Sem dados suficientes para gráfico de dispersão - {event_name})", normal_style))
-                story.append(Spacer(1, 1.0*cm)) # Espaço maior entre provas
+                    # Gerar e adicionar gráfico de dispersão (condicional)
+                    if self.check_pdf_scatter.isChecked():
+                        scatter_buffer = self._generate_pdf_scatter_plot(event_name, event_data_for_graph)
+                        if scatter_buffer:
+                            try:
+                                img_scatter = Image(scatter_buffer, width=img_width_pdf, height=img_width_pdf * (4.5/7.0))
+                                img_scatter.hAlign = 'CENTER'
+                                story.append(img_scatter)
+                            except Exception as img_err:
+                                print(f"Erro ao adicionar imagem do gráfico de dispersão para '{event_name}': {img_err}")
+                                story.append(Paragraph(f"(Erro ao gerar gráfico de dispersão para {event_name})", normal_style))
+                        else:
+                             story.append(Paragraph(f"(Sem dados suficientes para gráfico de dispersão - {event_name})", normal_style))
+                    story.append(Spacer(1, 1.0*cm)) # Espaço maior entre provas (ou no final da página)
             # --- Fim da Adição de Gráficos ---
 
             # Construir PDF com footer
@@ -1067,3 +1178,80 @@ class MeetSummaryTab(QWidget):
 
         return buf
     # --- FIM DAS NOVAS FUNÇÕES PDF ---
+
+    # --- NOVA FUNÇÃO PARA ANÁLISE COM IA ---
+    def _get_ai_analysis(self, summary_data, meet_name):
+        """Tenta obter uma análise textual da IA sobre os dados do meet."""
+        print("\n--- DEBUG: Iniciando _get_ai_analysis ---") # DEBUG
+        if not OPENAI_AVAILABLE:
+            print("DEBUG: OpenAI não disponível.") # DEBUG
+            return "Análise IA indisponível: Biblioteca OpenAI não encontrada."
+
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            print("DEBUG: Chave API OpenAI não encontrada.") # DEBUG
+            return f"Análise IA indisponível: Chave de API OpenAI não configurada (variável de ambiente OPENAI_API_KEY).\n(no Linux/macOS: export OPENAI_API_KEY='sua_chave', no Windows: set OPENAI_API_KEY=sua_chave ou via configurações do sistema)"
+
+        client = openai.OpenAI(api_key=api_key)
+
+        # --- Preparar um resumo dos dados para o prompt ---
+        # (Isto pode ser expandido para incluir mais detalhes relevantes)
+        prompt_data = f"Resumo da Competição: {meet_name}\n"
+        prompt_data += f"Medalhas Totais: Ouro={summary_data['gold']}, Prata={summary_data['silver']}, Bronze={summary_data['bronze']}\n"
+        
+        # Calcular melhores tempos por estilo (simplificado)
+        best_times_by_stroke = defaultdict(lambda: float('inf'))
+        strokes_present = set()
+        for item in summary_data['athlete_details']:
+            event = item.get('Prova', '')
+            time_sec = time_to_seconds(item.get('Tempo'))
+            if event and time_sec is not None:
+                 # Reutilizar a lógica de mapeamento (ou simplificar aqui)
+                 stroke = None
+                 event_lower = event.lower()
+                 parts = event.upper().split()
+                 if 'FREE' in parts: stroke = 'Livre'
+                 elif 'BACK' in parts: stroke = 'Costas'
+                 elif 'BREAST' in parts: stroke = 'Peito'
+                 elif 'FLY' in event_lower or 'BORBO' in event.upper(): stroke = 'Borboleta'
+                 elif 'MEDLEY' in event.upper(): stroke = 'Medley'
+                 
+                 if stroke:
+                     best_times_by_stroke[stroke] = min(best_times_by_stroke[stroke], time_sec)
+                     strokes_present.add(stroke)
+        
+        prompt_data += "Melhores tempos da equipe por estilo (segundos):\n"
+        for stroke in ['Livre', 'Costas', 'Peito', 'Borboleta', 'Medley']:
+             if stroke in strokes_present:
+                 prompt_data += f" - {stroke}: {best_times_by_stroke[stroke]:.2f}\n"
+             else:
+                 prompt_data += f" - {stroke}: (Não nadado)\n"
+        
+        # --- Construir o Prompt ---
+        system_prompt = "Você é um assistente analista de natação. Analise os dados fornecidos de forma concisa."
+        user_prompt = f"Com base nos seguintes dados da competição para a equipe:\n\n{prompt_data}\nForneça uma análise breve (máximo 3-4 parágrafos) sobre:\n1. Desempenho geral da equipe.\n2. Destaques por estilo de nado (onde a equipe foi bem ou mal comparativamente, se possível inferir).\n3. Pontos fortes observados.\n4. Sugestões de áreas para melhoria."
+
+        # --- DEBUG: Print do prompt enviado ---
+        print("\n--- DEBUG: Prompt enviado para OpenAI ---")
+        print(user_prompt)
+        print("---------------------------------------\n")
+        try:
+            print("Enviando requisição para OpenAI...") # Log
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo", # Ou outro modelo disponível
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+            )
+            analysis_text = response.choices[0].message.content
+            # --- DEBUG: Print da resposta recebida ---
+            print("\n--- DEBUG: Resposta recebida da OpenAI ---")
+            print(analysis_text)
+            print("----------------------------------------\n")
+            print("Análise IA recebida.") # Log
+            return analysis_text
+        except Exception as e:
+            print(f"Erro ao chamar API OpenAI: {e}")
+            return f"Erro ao gerar análise IA: {e}"
+    # --- FIM DA FUNÇÃO IA ---
