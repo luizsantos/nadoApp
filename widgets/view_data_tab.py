@@ -28,8 +28,8 @@ except ImportError:
 
 # Imports do ReportLab (similar ao meet_summary_tab)
 try:
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image # Adicionado ParagraphStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle # Adicionado ParagraphStyle
     from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
     from reportlab.lib.units import inch, cm
     from reportlab.lib.pagesizes import A4, landscape # Importa landscape
@@ -38,13 +38,14 @@ try:
 except ImportError:
     REPORTLAB_AVAILABLE = False
     # Definir classes dummy se necessário para evitar erros, mas a funcionalidade estará desabilitada
-    class SimpleDocTemplate: pass; 
-    class Paragraph: pass; 
-    class Spacer: pass; 
+    class SimpleDocTemplate: pass;
+    class Paragraph: pass;
+    class Spacer: pass;
     class Table: pass; landscape = lambda x: x # Dummy landscape
-    class TableStyle: pass; 
+    class TableStyle: pass;
     class Image: pass; 
-    def getSampleStyleSheet(): return {}; colors = None; TA_LEFT=0; TA_CENTER=1; TA_RIGHT=2; cm=1; A4=(0,0)
+    def getSampleStyleSheet(): return {}; 
+    class ParagraphStyle: pass; colors = None; TA_LEFT=0; TA_CENTER=1; TA_RIGHT=2; cm=1; A4=(0,0)
 
 # Adiciona o diretório pai
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -396,7 +397,7 @@ class ViewDataTab(QWidget):
             # Define os cabeçalhos finais (com Ritmo Sparkline)
             # Move "Cidade" e "Data" para o final
             display_headers = ["Atleta", "AnoNasc", "Prova", "Colocação", "Tempo",
-                               "Média Lap", "DP Lap", "Ritmo", # <<< Novo Cabeçalho
+                               "Média Lap", "DP Lap", "Ritmo", "Parciais", # <<< Novos Cabeçalhos
                                "vs Top3", "vs Top2", "vs Top1", "Cidade", "Data"] # <<< Movido para o final
 
             # Limpa APENAS a exibição da tabela, sem limpar self.current_table_data aqui
@@ -413,6 +414,7 @@ class ViewDataTab(QWidget):
             header_to_key_map["Cidade"] = "Cidade" # Mapeia o cabeçalho "Cidade"
             header_to_key_map["Data"] = "Data"     # Mapeia o cabeçalho "Data"
             header_to_key_map["Ritmo"] = "Lap Times" # Coluna "Ritmo" usa dados de "Lap Times"
+            header_to_key_map["Parciais"] = "Lap Times" # Coluna "Parciais" também usa "Lap Times"
 
             for row_idx, row_dict in enumerate(self.current_table_data):
                 col_idx = 0; athlete_place_str = row_dict.get("Colocação", "")
@@ -436,6 +438,17 @@ class ViewDataTab(QWidget):
                             item = QTableWidgetItem("N/A")
                             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                             self.table_widget.setItem(row_idx, col_idx, item)
+                    # --- Lógica para Parciais (Texto) ---
+                    elif key == "Parciais":
+                        self.table_widget.setCellWidget(row_idx, col_idx, None) # Limpa célula
+                        lap_times = value # Lista de tempos
+                        if lap_times:
+                            # Formata a lista como string: "30.12, 32.50, ..."
+                            parciais_str = "; ".join([f"{t:.2f}" for t in lap_times])
+                            item = QTableWidgetItem(parciais_str)
+                        else:
+                            item = QTableWidgetItem("N/A")
+                        self.table_widget.setItem(row_idx, col_idx, item)
                     # --- Fim da Lógica Sparkline ---
                     else:
                         # Para outras colunas, usa QTableWidgetItem
@@ -457,6 +470,9 @@ class ViewDataTab(QWidget):
             try:
                 sparkline_col_index = display_headers.index("Ritmo")
                 self.table_widget.setColumnWidth(sparkline_col_index, 90) # Ajustar largura
+                # Ajustar largura da coluna Parciais também
+                parciais_col_index = display_headers.index("Parciais")
+                self.table_widget.setColumnWidth(parciais_col_index, 120) # Ajustar largura
             except ValueError:
                 pass # Coluna não encontrada
 
@@ -495,11 +511,11 @@ class ViewDataTab(QWidget):
         key_func = None
 
         # Mapeamento de cabeçalho para chave do dicionário (necessário aqui para encontrar a chave de ordenação)
-        pdf_headers = ["Atleta", "Nasc", "Prova", "Col", "Tempo", "Média Lap", "DP Lap", "Ritmo", "vs T3", "vs T2", "vs T1", "Cidade", "Data"]
+        pdf_headers = ["Atleta", "Nasc", "Prova", "Col", "Tempo", "Média Lap", "DP Lap", "Ritmo", "Parciais", "vs T3", "vs T2", "vs T1", "Cidade", "Data"] # Adicionado "Parciais"
         header_to_key_map_pdf = { # Mapeamento para chaves do dicionário self.current_table_data
             "Atleta": "Atleta", "Nasc": "AnoNasc", "Prova": "Prova", "Col": "Colocação", "Tempo": "Tempo",
             "Média Lap": "Média Lap", "DP Lap": "DP Lap", "Ritmo": "Lap Times", "vs T3": "vs Top3",
-            "vs T2": "vs Top2", "vs T1": "vs Top1", "Cidade": "Cidade", "Data": "Data"
+            "vs T2": "vs Top2", "vs T1": "vs Top1", "Cidade": "Cidade", "Data": "Data", "Parciais": "Lap Times" # Adicionado "Parciais"
         }
         # Mapeamento reverso (índice da coluna visual -> chave do dicionário)
         current_display_headers = [self.table_widget.horizontalHeaderItem(i).text() for i in range(self.table_widget.columnCount())]
@@ -507,6 +523,7 @@ class ViewDataTab(QWidget):
         header_to_key_map_display["Ritmo"] = "Lap Times" # Ajuste para coluna Ritmo
         header_to_key_map_display["Cidade"] = "Cidade"
         header_to_key_map_display["Data"] = "Data"
+        header_to_key_map_display["Parciais"] = "Lap Times" # Ajuste para coluna Parciais
 
         if sort_col_index != -1 and 0 <= sort_col_index < len(current_display_headers):
             sort_header_text = current_display_headers[sort_col_index]
@@ -610,6 +627,17 @@ class ViewDataTab(QWidget):
                             row_list.append(img)
                         else:
                             row_list.append(Paragraph("N/A", body_style))
+                    elif h == "Parciais":
+                        lap_times = value # Lista de tempos
+                        if lap_times:
+                            parciais_str = "; ".join([f"{t:.2f}" for t in lap_times])
+                            # Cria um novo estilo baseado no body_style, mas com alinhamento à esquerda
+                            left_aligned_style = ParagraphStyle(name='LeftAligned', parent=body_style, alignment=TA_LEFT)
+                            p = Paragraph(parciais_str, left_aligned_style)
+                            row_list.append(p)
+                        else:
+                            left_aligned_style = ParagraphStyle(name='LeftAlignedNA', parent=body_style, alignment=TA_LEFT)
+                            p = Paragraph("N/A", left_aligned_style); row_list.append(p)
                     else:
                         cell_text = str(value)
                         is_bold = False
@@ -628,26 +656,36 @@ class ViewDataTab(QWidget):
                 # A largura disponível agora é a altura da página A4 menos as margens
                 available_width = page_width - left_margin - right_margin
                 # Definir larguras (ajustadas para aproveitar mais espaço horizontal)
-                col_widths = [ #"Atleta", "Nasc", "Prova", "Col", "Tempo", "Média Lap", "DP Lap", "Ritmo", "vs T3", "vs T2", "vs T1", "Cidade", "Data"
-                    3.5*cm, # Atleta (mais espaço)
+                # As larguras já foram ajustadas na modificação anterior para incluir Parciais
+                col_widths = [ #"Atleta", "Nasc", "Prova", "Col", "Tempo", "Média Lap", "DP Lap", "Ritmo", "Parciais", "vs T3", "vs T2", "vs T1", "Cidade", "Data"
+                    3.0*cm, # Atleta
                     1*cm,   # Nasc
-                    3.0*cm, # Prova (mais espaço)
+                    2.5*cm, # Prova
                     1.0*cm, # Col
                     1.8*cm, # Tempo
                     1.2*cm, # Média lap
                     1*cm,   # DP lap
                     sparkline_pdf_width + 0.1*cm, # Ritmo
+                    2.5*cm, # Parciais (precisa de espaço)
                     1.5*cm, # vs T3 (um pouco mais)
                     1.5*cm, # vs T2 (um pouco mais)
                     1.2*cm, # vs T1
-                    2.0*cm, # Cidade
+                    2.2*cm, # Cidade
                     1.8*cm  # Data
                     ]
                 if sum(col_widths) > available_width: scale = available_width / sum(col_widths); col_widths = [w * scale for w in col_widths]
                 table = Table(table_content, colWidths=col_widths, repeatRows=1)
+                
+                # Encontra o índice da coluna 'Parciais' para aplicar estilo específico
+                try:
+                    parciais_col_idx = pdf_headers.index("Parciais")
+                except ValueError:
+                    parciais_col_idx = -1 # Não encontrado, estilo não será aplicado
+                
                 style = TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('BOTTOMPADDING', (0, 0), (-1, 0), 5), ('TOPPADDING', (0, 0), (-1, 0), 5), ('GRID', (0, 0), (-1, -1), 0.5, colors.black), ('TOPPADDING', (0, 1), (-1, -1), 1), ('BOTTOMPADDING', (0, 1), (-1, -1), 1)])
                 for i in range(1, len(table_content)):
                     if i % 2 == 0: style.add('BACKGROUND', (0, i), (-1, i), colors.whitesmoke) # Linhas alternadas mais claras
+                
                 table.setStyle(style); story.append(table)
 
             # Construir PDF

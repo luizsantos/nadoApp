@@ -4,8 +4,8 @@ import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, # Adicionado QLabel
                                QComboBox, QTableWidget, QTableWidgetItem,
                                QAbstractItemView, QMessageBox, QSpacerItem,
-                               QSizePolicy, QTextEdit, QPushButton,
-                               QFileDialog)
+                               QSizePolicy, QTextEdit, QPushButton, QDialog, # Adicionado QDialog
+                               QFileDialog, QScrollArea) # Adicionado QScrollArea
 from PySide6.QtCore import Slot, Qt
 from PySide6.QtGui import QFont, QPixmap # Adicionado QPixmap
 import sqlite3
@@ -14,6 +14,8 @@ import re
 import statistics
 import math
 import io # Adicionado para buffer de imagem
+from datetime import datetime # Garante que o import está aqui
+import numpy as np # Adicionado para gráfico de radar
 
 # Tentar importar matplotlib
 try:
@@ -26,9 +28,24 @@ except ImportError:
     print("AVISO: Matplotlib não encontrado. Sparklines não estarão disponíveis.")
     plt = None
 
+# --- Matplotlib Imports para Gráfico Principal (similar a AnalysisTab) ---
+try:
+    # Usa Agg para sparklines, mas precisamos de QtAgg para o canvas principal
+    matplotlib.use('QtAgg') # Tenta usar backend QtAgg
+    import matplotlib.pyplot as plt # Reimporta com novo backend
+    from matplotlib.figure import Figure
+    from matplotlib.ticker import MaxNLocator # Para ajustar ticks de idade
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+    MATPLOTLIB_QT_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_QT_AVAILABLE = False
+    print("AVISO: Backend QtAgg do Matplotlib não encontrado. Gráfico principal não funcionará.")
+
+
 # Imports do ReportLab
 try:
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image # Adicionado Image
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak # Adicionado Image e PageBreak
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
     from reportlab.lib.units import inch, cm
@@ -82,6 +99,27 @@ def format_time_diff(diff_seconds):
     sign = "+" if diff_seconds >= 0 else "-"; return f"{sign}{abs(diff_seconds):.2f}s"
 # --- Fim das Funções Auxiliares ---
 
+# --- NOVA CLASSE PARA POP-UP DO GRÁFICO ---
+class GraphPopupDialog(QDialog):
+    """Um diálogo simples para exibir um gráfico Matplotlib com toolbar."""
+    def __init__(self, figure, window_title="Gráfico", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(window_title)
+        # self.setMinimumSize(1200, 900) # Remove o tamanho mínimo fixo
+
+        layout = QVBoxLayout(self)
+
+        # Cria o canvas e a toolbar DENTRO do diálogo
+        self.canvas = FigureCanvas(figure)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.canvas)
+
+        self.setLayout(layout)
+        self.setAttribute(Qt.WA_DeleteOnClose) # Garante que a janela seja destruída ao fechar
+
+
 
 class MeetSummaryTab(QWidget):
     # __init__, _populate_meet_combo, _on_meet_selected (sem alterações)
@@ -101,6 +139,7 @@ class MeetSummaryTab(QWidget):
              self.btn_export_pdf.setToolTip("\n".join(tooltip))
 
         top_bar_layout.addLayout(select_layout, 4); top_bar_layout.addWidget(self.btn_export_pdf, 1); self.main_layout.addLayout(top_bar_layout)
+        
         summary_grid = QGridLayout(); summary_grid.setContentsMargins(10, 10, 10, 10); summary_grid.setSpacing(15)
         summary_grid.addWidget(QLabel("<b>Medalhas Totais (Clube):</b>"), 0, 0, Qt.AlignmentFlag.AlignTop)
         self.lbl_medals_gold = QLabel("Ouro: 0"); self.lbl_medals_silver = QLabel("Prata: 0"); self.lbl_medals_bronze = QLabel("Bronze: 0")
@@ -112,11 +151,114 @@ class MeetSummaryTab(QWidget):
         summary_grid.addWidget(QLabel("<b>Medalhas por Prova:</b>"), 0, 2, Qt.AlignmentFlag.AlignTop)
         self.txt_medals_per_event = QTextEdit(); self.txt_medals_per_event.setReadOnly(True); self.txt_medals_per_event.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         summary_grid.addWidget(self.txt_medals_per_event, 0, 3, 2, 1, Qt.AlignmentFlag.AlignTop)
-        summary_grid.setColumnStretch(1, 1); summary_grid.setColumnStretch(3, 2); self.main_layout.addLayout(summary_grid)
+        summary_grid.setColumnStretch(1, 1); summary_grid.setColumnStretch(3, 2); 
+        # self.main_layout.addLayout(summary_grid) # Movido para dentro do scroll
+        
         self.table_athletes = QTableWidget(); self.table_athletes.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.table_athletes.setAlternatingRowColors(True)
         self.table_athletes.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.table_athletes.setSortingEnabled(True)
-        self.main_layout.addWidget(QLabel("<b>Detalhes dos Atletas na Competição:</b>")); self.main_layout.addWidget(self.table_athletes, 1)
+        # self.main_layout.addWidget(QLabel("<b>Detalhes dos Atletas na Competição:</b>")); self.main_layout.addWidget(self.table_athletes, 1) # Movido para dentro do scroll
+        
+        # --- Container Widget para o conteúdo rolável ---
+        scroll_content_widget = QWidget()
+        scroll_content_layout = QVBoxLayout(scroll_content_widget)
+        scroll_content_layout.addLayout(summary_grid) # Adiciona grid do resumo
+        scroll_content_layout.addWidget(QLabel("<b>Detalhes dos Atletas na Competição:</b>"))
+        # Define uma altura mínima para a tabela para ajudar a forçar o scroll
+        self.table_athletes.setMinimumHeight(300) 
+        # Adiciona tabela SEM stretch factor para que ela não encolha demais
+        scroll_content_layout.addWidget(self.table_athletes, 1) # Adiciona tabela (stretch factor 1)
+        
         self.setLayout(self.main_layout); self._populate_meet_combo()
+
+        # --- Seção do Gráfico Comparativo por Prova ---
+        graph_section_layout = QVBoxLayout()
+        graph_controls_layout = QHBoxLayout()
+        graph_controls_layout.addWidget(QLabel("Visualizar Gráfico da Prova:"))
+        self.combo_event_graph = QComboBox()
+        self.combo_event_graph.addItem("--- Selecione Prova ---", userData=None)
+        self.combo_event_graph.setEnabled(False)
+        self.combo_event_graph.currentIndexChanged.connect(self._on_event_graph_selected)
+        graph_controls_layout.addWidget(self.combo_event_graph, 1)
+        self.btn_generate_event_graph = QPushButton("Gerar Gráfico")
+        self.btn_generate_event_graph.setEnabled(False)
+        self.btn_generate_event_graph.clicked.connect(self._generate_event_graph)
+        graph_controls_layout.addWidget(self.btn_generate_event_graph)
+        graph_section_layout.addLayout(graph_controls_layout)
+
+        # Área do Gráfico
+        # self.event_graph_widget = QWidget()
+        # self.event_graph_layout = QVBoxLayout(self.event_graph_widget)
+        # self.event_graph_layout.setContentsMargins(0,0,0,0)
+        # self.event_graph_canvas = None
+        self.event_graph_toolbar = None
+        self.event_graph_figure = None
+        self.event_graph_ax = None
+
+        if MATPLOTLIB_QT_AVAILABLE:
+            self.event_graph_figure = Figure(figsize=(8, 6), dpi=100) # Aumenta o tamanho padrão da figura
+            self.event_graph_ax = self.event_graph_figure.add_subplot(111) # Cria os eixos
+            # self.event_graph_canvas = FigureCanvas(self.event_graph_figure)
+            # self.event_graph_toolbar = NavigationToolbar(self.event_graph_canvas, self)
+            # self.event_graph_layout.addWidget(self.event_graph_toolbar)
+            # self.event_graph_layout.addWidget(self.event_graph_canvas)
+            self._clear_event_graph(show_placeholder=True) # Placeholder inicial
+        # else:
+        #     error_label = QLabel("Gráfico indisponível (Matplotlib Qt backend não encontrado).")
+        #     error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        #     self.event_graph_layout.addWidget(error_label)
+
+        # Define uma altura mínima para o widget do gráfico
+        # self.event_graph_widget.setMinimumHeight(600) # Aumentado de 400 para 600
+        # graph_section_layout.addWidget(self.event_graph_widget)
+        # self.main_layout.addLayout(graph_section_layout) # Movido para dentro do scroll
+        scroll_content_layout.addLayout(graph_section_layout) # Adiciona seção do gráfico
+
+        # --- Seção do Gráfico de Dispersão (Idade vs Tempo) ---
+        scatter_section_layout = QVBoxLayout()
+        scatter_controls_layout = QHBoxLayout()
+        scatter_controls_layout.addWidget(QLabel("Visualizar Dispersão Idade x Tempo:"))
+        self.combo_scatter_event = QComboBox()
+        self.combo_scatter_event.addItem("--- Selecione Prova ---", userData=None)
+        self.combo_scatter_event.setEnabled(False)
+        self.combo_scatter_event.currentIndexChanged.connect(self._on_scatter_event_selected)
+        scatter_controls_layout.addWidget(self.combo_scatter_event, 1)
+        self.btn_generate_scatter = QPushButton("Gerar Gráfico Dispersão")
+        self.btn_generate_scatter.setEnabled(False)
+        self.btn_generate_scatter.clicked.connect(self._generate_scatter_plot)
+        scatter_controls_layout.addWidget(self.btn_generate_scatter)
+        scatter_section_layout.addLayout(scatter_controls_layout)
+
+        # Área do Gráfico de Dispersão
+        # self.scatter_plot_widget = QWidget()
+        # self.scatter_plot_layout = QVBoxLayout(self.scatter_plot_widget)
+        # self.scatter_plot_layout.setContentsMargins(0,0,0,0)
+        # self.scatter_plot_canvas = None
+        self.scatter_plot_toolbar = None
+        self.scatter_plot_figure = None
+        self.scatter_plot_ax = None
+
+        if MATPLOTLIB_QT_AVAILABLE:
+            self.scatter_plot_figure = Figure(figsize=(8, 6), dpi=100) # Aumenta o tamanho padrão da figura
+            self.scatter_plot_ax = self.scatter_plot_figure.add_subplot(111) # Cria os eixos
+            # self.scatter_plot_canvas = FigureCanvas(self.scatter_plot_figure)
+            # self.scatter_plot_toolbar = NavigationToolbar(self.scatter_plot_canvas, self)
+            # self.scatter_plot_layout.addWidget(self.scatter_plot_toolbar)
+            # self.scatter_plot_layout.addWidget(self.scatter_plot_canvas)
+            self._clear_scatter_plot(show_placeholder=True) # Placeholder inicial
+        # (Não precisa de else aqui, pois já foi tratado no gráfico anterior)
+        # Define uma altura mínima maior para o widget do gráfico de dispersão
+        #self.scatter_plot_widget.setMinimumHeight(600) # Definindo altura mínima (ajuste conforme necessário)
+        #scatter_section_layout.addWidget(self.scatter_plot_widget)
+        scroll_content_layout.addLayout(scatter_section_layout) # Adiciona seção do scatter
+    
+
+        # --- Configuração da QScrollArea ---
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True) # Permite que o widget interno redimensione
+        scroll_area.setWidget(scroll_content_widget) # Define o widget com todo o conteúdo
+
+        self.main_layout.addWidget(scroll_area, 1) # Adiciona a área de scroll ao layout principal (stretch factor 1)
+
 
     def _populate_meet_combo(self):
         conn = None
@@ -136,7 +278,13 @@ class MeetSummaryTab(QWidget):
     def _on_meet_selected(self, index):
         self.current_meet_id = self.combo_select_meet.itemData(index); self.last_meet_name = self.combo_select_meet.itemText(index)
         if self.current_meet_id is None: self._clear_summary(); self.btn_export_pdf.setEnabled(False); return
-        print(f"MeetSummaryTab: Selecionado Meet ID: {self.current_meet_id}"); self._generate_and_display_summary()
+        print(f"MeetSummaryTab: Selecionado Meet ID: {self.current_meet_id}")
+        summary_generated = self._generate_and_display_summary()
+        if summary_generated:
+            self._populate_event_graph_combo() # Popula combo de eventos para gráfico
+            self._populate_scatter_event_combo() # Popula combo de eventos para scatter
+        
+        
         # Habilita exportação apenas se ambas as bibliotecas estiverem disponíveis
         self.btn_export_pdf.setEnabled(REPORTLAB_AVAILABLE and MATPLOTLIB_AVAILABLE)
 
@@ -266,11 +414,14 @@ class MeetSummaryTab(QWidget):
 
             # Guarda os dados processados para exportação
             self.last_summary_data = {"gold": gold_count, "silver": silver_count, "bronze": bronze_count, "athletes_per_event_str": athletes_event_str or "Nenhum atleta encontrado.", "medals_per_event_str": medals_event_str or "Nenhuma medalha encontrada.", "athlete_details": athlete_table_data}
+            return True # Indica sucesso
 
         except sqlite3.Error as e: QMessageBox.critical(self, "Erro DB", f"Erro ao gerar resumo:\n{e}"); self._clear_summary()
         except Exception as e: QMessageBox.critical(self, "Erro", f"Erro inesperado ao gerar resumo:\n{e}"); import traceback; print(traceback.format_exc()); self._clear_summary()
         finally:
             if conn: conn.close()
+        
+        return False # Indica falha
 
     # --- NOVA FUNÇÃO: Gerar Sparkline (copiada de view_data_tab) ---
     def _generate_sparkline_pixmap(self, lap_times, width_px=80, height_px=20):
@@ -306,14 +457,16 @@ class MeetSummaryTab(QWidget):
         if not table_data: return
         # Cabeçalhos com "Ritmo"
         headers = ["Atleta", "AnoNasc", "Prova", "Colocação", "Tempo",
-                   "Média Lap", "DP Lap", "Ritmo", # <<< Novo Cabeçalho
+                   "Média Lap", "DP Lap", "Ritmo", "Parciais", # <<< Novos Cabeçalhos
                    "vs Top3", "vs Top2", "vs Top1"]
         self.table_athletes.setColumnCount(len(headers)); self.table_athletes.setHorizontalHeaderLabels(headers)
         self.table_athletes.setRowCount(len(table_data)); bold_font = QFont(); bold_font.setBold(True)
 
         # Mapeamento de cabeçalho para chave do dicionário
+        # Mapeia "Ritmo" e "Parciais" para a mesma fonte de dados "Lap Times"
         header_to_key_map = {h: h for h in headers}
         header_to_key_map["Ritmo"] = "Lap Times"
+        header_to_key_map["Parciais"] = "Lap Times" # <<< ADICIONAR ESTA LINHA
 
         for row_idx, row_dict in enumerate(table_data):
             col_idx = 0; athlete_place_str = row_dict.get("Colocação", "")
@@ -335,6 +488,17 @@ class MeetSummaryTab(QWidget):
                         item = QTableWidgetItem("N/A")
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                         self.table_athletes.setItem(row_idx, col_idx, item)
+                # --- Lógica para Parciais (Texto) ---
+                elif key == "Parciais":
+                    self.table_athletes.setCellWidget(row_idx, col_idx, None) # Limpa célula
+                    lap_times = value # Lista de tempos
+                    if lap_times:
+                        # Formata a lista como string: "30.12, 32.50, ..."
+                        parciais_str = "; ".join([f"{t:.2f}" for t in lap_times])
+                        item = QTableWidgetItem(parciais_str)
+                    else:
+                        item = QTableWidgetItem("N/A")
+                    self.table_athletes.setItem(row_idx, col_idx, item)
                 # --- Fim da Lógica Sparkline ---
                 else:
                     # Outras colunas
@@ -354,12 +518,24 @@ class MeetSummaryTab(QWidget):
         try:
             sparkline_col_index = headers.index("Ritmo")
             self.table_athletes.setColumnWidth(sparkline_col_index, 90)
+            # Ajustar largura da coluna Parciais também
+            parciais_col_index = headers.index("Parciais")
+            # Pode precisar de mais largura dependendo do número de parciais
+            self.table_athletes.setColumnWidth(parciais_col_index, 120)
         except ValueError: pass
 
     def _clear_summary(self):
         self.lbl_medals_gold.setText("Ouro: 0"); self.lbl_medals_silver.setText("Prata: 0"); self.lbl_medals_bronze.setText("Bronze: 0")
         self.txt_athletes_per_event.clear(); self.txt_medals_per_event.clear(); self.table_athletes.setRowCount(0); self.table_athletes.setColumnCount(0)
         self.last_summary_data = None; self.last_meet_name = ""
+        # Limpa também a seção do gráfico de evento
+        self.combo_event_graph.clear(); self.combo_event_graph.addItem("--- Selecione Prova ---"); self.combo_event_graph.setEnabled(False)
+        self.btn_generate_event_graph.setEnabled(False)
+        self._clear_event_graph(show_placeholder=True)
+        # Limpa também o scatter plot
+        self._clear_scatter_plot(show_placeholder=True)
+
+
 
     @Slot()
     def refresh_data(self):
@@ -390,6 +566,224 @@ class MeetSummaryTab(QWidget):
             except: pass
             return None
     # --- FIM DA NOVA FUNÇÃO ---
+
+    # --- NOVAS FUNÇÕES PARA GRÁFICO DE EVENTO ---
+    def _populate_event_graph_combo(self):
+        """Popula o ComboBox com as provas presentes no resumo atual."""
+        self.combo_event_graph.blockSignals(True)
+        self.combo_event_graph.clear()
+        self.combo_event_graph.addItem("--- Selecione Prova ---", userData=None)
+        self.combo_event_graph.setEnabled(False)
+        self.btn_generate_event_graph.setEnabled(False)
+
+        if self.last_summary_data and 'athlete_details' in self.last_summary_data:
+            events = sorted(list(set(item['Prova'] for item in self.last_summary_data['athlete_details'] if item.get('Prova'))))
+            if events:
+                for event_name in events:
+                    self.combo_event_graph.addItem(event_name)
+                self.combo_event_graph.setEnabled(True)
+
+        self.combo_event_graph.blockSignals(False)
+        self._clear_event_graph(show_placeholder=True) # Limpa gráfico ao trocar de meet
+
+    @Slot(int)
+    def _on_event_graph_selected(self, index):
+        """Habilita o botão de gerar gráfico se uma prova válida for selecionada."""
+        event_name = self.combo_event_graph.itemData(index) # userData é None para o prompt
+        is_valid_selection = (index > 0) # Índice 0 é o prompt
+        self.btn_generate_event_graph.setEnabled(is_valid_selection)
+    
+    def _populate_scatter_event_combo(self):
+        """Popula o ComboBox com as provas para o gráfico de dispersão."""
+        self.combo_scatter_event.blockSignals(True)
+        self.combo_scatter_event.clear()
+        self.combo_scatter_event.addItem("--- Selecione Prova ---", userData=None)
+        self.combo_scatter_event.setEnabled(False)
+        self.btn_generate_scatter.setEnabled(False)
+
+        if self.last_summary_data and 'athlete_details' in self.last_summary_data:
+            events = sorted(list(set(item['Prova'] for item in self.last_summary_data['athlete_details'] if item.get('Prova'))))
+            if events:
+                for event_name in events:
+                    self.combo_scatter_event.addItem(event_name)
+                self.combo_scatter_event.setEnabled(True)
+
+        self.combo_scatter_event.blockSignals(False)
+        self._clear_scatter_plot(show_placeholder=True)
+
+
+    def _clear_event_graph(self, show_placeholder=False):
+        """Limpa a área do gráfico de evento."""
+        if not self.event_graph_ax:
+             if MATPLOTLIB_QT_AVAILABLE and self.event_graph_figure:
+                 self.event_graph_ax = self.event_graph_figure.add_subplot(111)
+             else:
+                 return # Não pode limpar se não existe
+
+        self.event_graph_ax.clear()
+        # if show_placeholder:
+        #      self.event_graph_ax.text(0.5, 0.5, 'Selecione uma prova e clique em "Gerar Gráfico"',
+        #                               horizontalalignment='center', verticalalignment='center',
+        #                               transform=self.event_graph_ax.transAxes, wrap=True)
+        # self.event_graph_ax.set_xticks([])
+        # self.event_graph_ax.set_yticks([])
+        # if self.event_graph_canvas:
+        #     try:
+        #         self.event_graph_figure.tight_layout()
+        #     except Exception: pass
+        #     self.event_graph_canvas.draw()
+
+    @Slot()
+    def _generate_scatter_plot(self):
+        """Gera o gráfico de dispersão Idade vs Tempo."""
+        if not MATPLOTLIB_QT_AVAILABLE: return
+        if not self.last_summary_data or 'athlete_details' not in self.last_summary_data: return
+
+        selected_event = self.combo_scatter_event.currentText()
+        if selected_event == "--- Selecione Prova ---": return
+
+        # Filtra os dados para a prova selecionada
+        event_data = [item for item in self.last_summary_data['athlete_details'] if item.get('Prova') == selected_event]
+        print(f"Scatter Plot: Found {len(event_data)} results for event '{selected_event}'") # DEBUG
+
+        # Extrai dados para plotagem (Idade vs Tempo)
+        plot_data = []
+        current_year = datetime.now().year # Aproximação da idade
+        for item in event_data:
+            try:
+                birth_year_str = item.get('AnoNasc')
+                time_sec = time_to_seconds(item.get('Tempo'))
+                if birth_year_str and time_sec is not None:
+                    birth_year = int(birth_year_str)
+                    age = current_year - birth_year # Idade aproximada no ano atual
+                    plot_data.append({'age': age, 'time': time_sec, 'athlete': item.get('Atleta', '')})
+            except (ValueError, TypeError):
+                continue # Ignora se ano de nasc. não for numérico
+
+        print(f"Scatter Plot: Extracted {len(plot_data)} valid data points (age, time)") # DEBUG
+        self._clear_scatter_plot() # Limpa antes de plotar
+
+        if not plot_data:
+            self.scatter_plot_ax.text(0.5, 0.5, f'Nenhum dado válido (idade e tempo)\npara {selected_event}', horizontalalignment='center', verticalalignment='center', transform=self.scatter_plot_ax.transAxes, wrap=True, color='red')
+        else:
+            ages = [item['age'] for item in plot_data]
+            times = [item['time'] for item in plot_data]
+            print(f"Scatter Plot: Plotting {len(ages)} points.") # DEBUG
+
+            self.scatter_plot_ax.scatter(ages, times, alpha=0.7)
+
+            # Adiciona nome do atleta ao lado dos pontos (opcional, pode poluir)
+            # Descomentado para adicionar o primeiro nome
+            for item in plot_data:
+                 self.scatter_plot_ax.text(item['age'], item['time'], f" {item['athlete'].split()[0]}", fontsize=7, va='bottom')
+
+            self.scatter_plot_ax.set_title(f'Dispersão Idade vs Tempo - {selected_event}')
+            self.scatter_plot_ax.set_xlabel('Idade (aproximada)')
+            self.scatter_plot_ax.set_ylabel('Tempo (segundos)')
+            self.scatter_plot_ax.grid(True, linestyle=':', alpha=0.7)
+            # self.scatter_plot_ax.invert_yaxis() # Opcional: inverter eixo Y
+
+            # Garante que o eixo X (idade) mostre apenas inteiros
+            self.scatter_plot_ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+        # Redesenha
+        try:
+            self.scatter_plot_figure.tight_layout()
+        except Exception as e:
+             print(f"Scatter Plot: Warning during tight_layout: {e}") # DEBUG
+        # Cria e mostra o diálogo pop-up
+        dialog = GraphPopupDialog(self.scatter_plot_figure, f"Dispersão - {selected_event}", self)
+        dialog.show()
+
+
+    @Slot(int)
+    def _on_scatter_event_selected(self, index):
+        """Habilita o botão de gerar gráfico de dispersão."""
+        is_valid_selection = (index > 0)
+        self.btn_generate_scatter.setEnabled(is_valid_selection)
+
+    def _clear_scatter_plot(self, show_placeholder=False):
+        """Limpa a área do gráfico de dispersão."""
+        if not self.scatter_plot_ax:
+             if MATPLOTLIB_QT_AVAILABLE and self.scatter_plot_figure:
+                 self.scatter_plot_ax = self.scatter_plot_figure.add_subplot(111)
+             else:
+                 return
+
+        self.scatter_plot_ax.clear()
+        # if show_placeholder:
+        #      self.scatter_plot_ax.text(0.5, 0.5, 'Selecione uma prova e clique em\n"Gerar Gráfico Dispersão"',
+        #                               horizontalalignment='center', verticalalignment='center',
+        #                               transform=self.scatter_plot_ax.transAxes, wrap=True)
+        # self.scatter_plot_ax.set_xticks([])
+        # self.scatter_plot_ax.set_yticks([])
+        # if self.scatter_plot_canvas:
+        #     try: self.scatter_plot_figure.tight_layout()
+        #     except Exception: pass; self.scatter_plot_canvas.draw()
+
+
+    @Slot()
+    def _generate_event_graph(self):
+        """Gera o gráfico comparativo para a prova selecionada."""
+        if not MATPLOTLIB_QT_AVAILABLE: return
+        if not self.last_summary_data or 'athlete_details' not in self.last_summary_data: return
+
+        selected_event = self.combo_event_graph.currentText()
+        if selected_event == "--- Selecione Prova ---": return
+
+        # Filtra os dados para a prova selecionada
+        event_data = [item for item in self.last_summary_data['athlete_details'] if item.get('Prova') == selected_event]
+
+        # Extrai dados para plotagem (Colocação vs Tempo)
+        plot_data = []
+        for item in event_data:
+            try:
+                place = int(item.get('Colocação')) # Tenta converter colocação para int
+                time_sec = time_to_seconds(item.get('Tempo'))
+                if time_sec is not None:
+                    plot_data.append({'place': place, 'time': time_sec, 'athlete': item.get('Atleta', '')})
+            except (ValueError, TypeError):
+                continue # Ignora resultados com colocação não numérica (DSQ, DNS, etc.)
+
+        self._clear_event_graph() # Limpa antes de plotar
+
+        if not plot_data:
+            self.event_graph_ax.text(0.5, 0.5, f'Nenhum resultado numérico válido para\n{selected_event}', horizontalalignment='center', verticalalignment='center', transform=self.event_graph_ax.transAxes, wrap=True, color='red')
+        else:
+            # Ordena por tempo (melhor para pior) para o gráfico de barras
+            plot_data.sort(key=lambda x: x['time'])
+            athletes = [item['athlete'] for item in plot_data]
+            times = [item['time'] for item in plot_data]
+
+            # Cria o gráfico de barras
+            bars = self.event_graph_ax.bar(athletes, times)
+
+            # Define os nomes dos atletas como rótulos do eixo X
+            self.event_graph_ax.set_xticks(range(len(athletes)))
+            self.event_graph_ax.set_xticklabels(athletes)
+            self.event_graph_ax.set_title(f'Comparativo de Tempos - {selected_event}')
+            self.event_graph_ax.set_xlabel('Atleta')
+            self.event_graph_ax.set_ylabel('Tempo (segundos)')
+            self.event_graph_ax.grid(True, linestyle=':', alpha=0.7)
+            # self.event_graph_ax.invert_yaxis() # Não inverte para barras
+
+            # Rotaciona os nomes dos atletas se forem muitos
+            if len(athletes) > 5:
+                self.event_graph_figure.autofmt_xdate(rotation=45, ha='right')
+            # Adiciona os valores acima das barras
+            self.event_graph_ax.bar_label(bars, fmt='%.2f', padding=3, fontsize=8)
+            # Ajusta limite Y para dar espaço aos rótulos
+            self.event_graph_ax.set_ylim(0, max(times) * 1.1 if times else 1)
+
+        # Redesenha
+        try:
+            self.event_graph_figure.tight_layout() # Ajusta layout da figura
+        except Exception: pass
+         # Cria e mostra o diálogo pop-up
+        dialog = GraphPopupDialog(self.event_graph_figure, f"Gráfico - {selected_event}", self)
+        dialog.show()
+    # --- FIM DAS NOVAS FUNÇÕES ---
+
 
     @Slot()
     def _export_to_pdf(self):
@@ -510,6 +904,52 @@ class MeetSummaryTab(QWidget):
                     if i % 2 == 0: style.add('BACKGROUND', (0, i), (-1, i), colors.lightgrey)
                 table.setStyle(style); story.append(table)
 
+            # --- Adicionar Gráficos por Prova ao PDF ---
+            story.append(Spacer(1, 1.0*cm)) # Espaço antes dos gráficos
+            unique_events = sorted(list(set(item['Prova'] for item in athlete_details if item.get('Prova'))))
+
+            graph_heading_style = styles['h2'] # Usar H2 para mais destaque na página
+            # Define uma largura fixa para as imagens no PDF (ajuste conforme necessário)
+            img_width_pdf = 17*cm
+
+            for i, event_name in enumerate(unique_events):
+                # Adiciona quebra de página ANTES de cada conjunto de gráficos
+                story.append(PageBreak())
+                story.append(Paragraph(f"Gráficos - {event_name}", graph_heading_style))
+                story.append(Spacer(1, 0.2*cm))
+
+                event_data_for_graph = [item for item in athlete_details if item.get('Prova') == event_name]
+
+                # Gerar e adicionar gráfico de barras
+                bar_buffer = self._generate_pdf_bar_chart(event_name, event_data_for_graph)
+                if bar_buffer:
+                    try:
+                        # Usa largura fixa e calcula altura proporcional baseada no figsize
+                        img_bar = Image(bar_buffer, width=img_width_pdf, height=img_width_pdf * (4.5/7.0))
+                        img_bar.hAlign = 'CENTER'
+                        story.append(img_bar)
+                        story.append(Spacer(1, 0.5*cm))
+                    except Exception as img_err:
+                        print(f"Erro ao adicionar imagem do gráfico de barras para '{event_name}': {img_err}")
+                        story.append(Paragraph(f"(Erro ao gerar gráfico de barras para {event_name})", normal_style))
+                else:
+                    story.append(Paragraph(f"(Sem dados suficientes para gráfico de barras - {event_name})", normal_style))
+
+                # Gerar e adicionar gráfico de dispersão
+                scatter_buffer = self._generate_pdf_scatter_plot(event_name, event_data_for_graph)
+                if scatter_buffer:
+                    try:
+                        img_scatter = Image(scatter_buffer, width=img_width_pdf, height=img_width_pdf * (4.5/7.0))
+                        img_scatter.hAlign = 'CENTER'
+                        story.append(img_scatter)
+                    except Exception as img_err:
+                        print(f"Erro ao adicionar imagem do gráfico de dispersão para '{event_name}': {img_err}")
+                        story.append(Paragraph(f"(Erro ao gerar gráfico de dispersão para {event_name})", normal_style))
+                else:
+                     story.append(Paragraph(f"(Sem dados suficientes para gráfico de dispersão - {event_name})", normal_style))
+                story.append(Spacer(1, 1.0*cm)) # Espaço maior entre provas
+            # --- Fim da Adição de Gráficos ---
+
             # Construir PDF com footer
             doc.build(story, onFirstPage=self._draw_footer, onLaterPages=self._draw_footer)
             QMessageBox.information(self, "Exportação Concluída", f"Resumo salvo com sucesso em:\n{fileName}")
@@ -523,4 +963,107 @@ class MeetSummaryTab(QWidget):
         footer_text = "Luiz Arthur Feitosa dos Santos - luizsantos@utfpr.edu.br"
         page_width = doc.pagesize[0]; bottom_margin = doc.bottomMargin
         canvas.drawCentredString(page_width / 2.0, bottom_margin * 0.75, footer_text); canvas.restoreState()
+    
+    # --- NOVAS FUNÇÕES PARA GERAR GRÁFICOS PARA PDF ---
+    def _generate_pdf_bar_chart(self, event_name, event_data):
+        """Gera uma imagem PNG do gráfico de barras para o PDF."""
+        if not MATPLOTLIB_AVAILABLE: return None
 
+        plot_data = []
+        for item in event_data:
+            try:
+                # place = int(item.get('Colocação')) # Não precisamos da colocação aqui
+                time_sec = time_to_seconds(item.get('Tempo'))
+                if time_sec is not None:
+                    plot_data.append({'time': time_sec, 'athlete': item.get('Atleta', '')})
+            except (ValueError, TypeError):
+                continue
+
+        if not plot_data: return None
+
+        # Cria uma NOVA figura e eixos para este gráfico específico
+        fig, ax = plt.subplots(figsize=(7, 4.5), dpi=120) # Tamanho reduzido, DPI aumentado
+
+
+        plot_data.sort(key=lambda x: x['time'])
+        athletes = [item['athlete'] for item in plot_data]
+        times = [item['time'] for item in plot_data]
+
+        bars = ax.bar(athletes, times)
+        ax.set_xticks(range(len(athletes)))
+        ax.set_xticklabels(athletes)
+        ax.set_title(f'Comparativo de Tempos - {event_name}', fontsize=10)
+        ax.set_xlabel('Atleta', fontsize=8)
+        ax.set_ylabel('Tempo (segundos)', fontsize=8)
+        ax.grid(True, axis='y', linestyle=':', alpha=0.7)
+        if len(athletes) > 5:
+            fig.autofmt_xdate(rotation=45, ha='right')
+        ax.bar_label(bars, fmt='%.2f', padding=3, fontsize=6)
+        ax.set_ylim(0, max(times) * 1.1 if times else 1)
+        ax.tick_params(axis='both', which='major', labelsize=7) # Fonte menor nos eixos
+
+        buf = io.BytesIO()
+        try:
+            fig.tight_layout()
+            fig.savefig(buf, format='png', bbox_inches='tight')
+            buf.seek(0)
+        except Exception as e:
+            print(f"Erro ao salvar gráfico de barras PDF: {e}")
+            buf = None
+        finally:
+            plt.close(fig) # Fecha a figura para liberar memória
+
+        return buf
+
+    def _generate_pdf_scatter_plot(self, event_name, event_data):
+        """Gera uma imagem PNG do gráfico de dispersão para o PDF."""
+        if not MATPLOTLIB_AVAILABLE or not MaxNLocator: return None
+
+        plot_data = []
+        current_year = datetime.now().year
+        for item in event_data:
+            try:
+                birth_year_str = item.get('AnoNasc')
+                time_sec = time_to_seconds(item.get('Tempo'))
+                if birth_year_str and time_sec is not None:
+                    birth_year = int(birth_year_str)
+                    age = current_year - birth_year
+                    plot_data.append({'age': age, 'time': time_sec, 'athlete': item.get('Atleta', '')})
+            except (ValueError, TypeError):
+                continue
+
+        if not plot_data: return None
+
+        # Cria uma NOVA figura e eixos
+        fig, ax = plt.subplots(figsize=(7, 4.5), dpi=120) # Tamanho reduzido, DPI aumentado
+
+
+        ages = [item['age'] for item in plot_data]
+        times = [item['time'] for item in plot_data]
+
+        ax.scatter(ages, times, alpha=0.7, s=20) # Pontos menores para PDF
+        ax.set_title(f'Dispersão Idade vs Tempo - {event_name}', fontsize=10)
+        ax.set_xlabel('Idade (aproximada)', fontsize=8)
+        ax.set_ylabel('Tempo (segundos)', fontsize=8)
+        ax.grid(True, linestyle=':', alpha=0.7)
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.tick_params(axis='both', which='major', labelsize=7)
+
+        # Adiciona o primeiro nome do atleta ao lado dos pontos
+        for item in plot_data:
+            # Ajusta tamanho da fonte e posição se necessário
+            ax.text(item['age'], item['time'], f" {item['athlete'].split()[0]}", fontsize=5, va='bottom')
+
+        buf = io.BytesIO()
+        try:
+            fig.tight_layout()
+            fig.savefig(buf, format='png', bbox_inches='tight')
+            buf.seek(0)
+        except Exception as e:
+            print(f"Erro ao salvar gráfico de dispersão PDF: {e}")
+            buf = None
+        finally:
+            plt.close(fig) # Fecha a figura
+
+        return buf
+    # --- FIM DAS NOVAS FUNÇÕES PDF ---
