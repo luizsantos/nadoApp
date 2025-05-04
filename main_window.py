@@ -17,6 +17,7 @@ from widgets.filter_data_tab import FilterDataTab
 from widgets.analysis_tab import AnalysisTab
 from widgets.edit_meet_tab import EditMeetTab 
 from widgets.meet_summary_tab import MeetSummaryTab
+from widgets.athlete_report_tab import AthleteReportTab
 
 # --- Configurações ---
 APP_DIR = parent_dir
@@ -76,6 +77,9 @@ class MainWindow(QMainWindow):
         self.analysis_tab = AnalysisTab(DB_PATH)
         self.tabs.addTab(self.analysis_tab, "Análise")
 
+        self.athlete_report_tab = AthleteReportTab(DB_PATH)
+        self.tabs.addTab(self.athlete_report_tab, "Relatório Atleta")
+
         # 5. NOVA Aba de Edição de Competições
         self.edit_meet_tab = EditMeetTab(DB_PATH)
         self.tabs.addTab(self.edit_meet_tab, "Editar Competições") # <<< Adiciona a nova aba
@@ -87,6 +91,8 @@ class MainWindow(QMainWindow):
         self.import_tab.import_success.connect(self.analysis_tab.refresh_data)
         self.import_tab.import_success.connect(self.edit_meet_tab.refresh_data)
         self.import_tab.import_success.connect(self.meet_summary_tab.refresh_data)
+        self.import_tab.import_success.connect(self.athlete_report_tab.refresh_data) # <<< Conecta o sinal
+
 
     # Opcional: Método closeEvent para garantir fechamento limpo
     # def closeEvent(self, event):
