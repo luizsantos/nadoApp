@@ -14,10 +14,10 @@ class LenexImporter(QObject):
     log_message = Signal(str)
     finished = Signal(bool, str)
 
-    def __init__(self, db_path, target_club, parent=None):
+    def __init__(self, db_path, target_club_name, parent=None): # Modificado para receber target_club_name
         super().__init__(parent)
         self.db_path = db_path
-        self.target_club = target_club
+        self.target_club_name = target_club_name # Armazena o nome do clube
         self.files_to_process = []
         self._is_running = False
 
@@ -228,7 +228,7 @@ class LenexImporter(QObject):
         splits_cm_to_insert = []; target_athlete_licenses = set(); all_results_for_top3 = defaultdict(list)
         try:
             for club_tag in root.findall('.//CLUB'):
-                club_name = club_tag.get('name'); is_target_club = (club_name == self.target_club)
+                club_name = club_tag.get('name'); is_target_club = (club_name == self.target_club_name) # <<< USA self.target_club_name
                 athletes_tag = club_tag.find('ATHLETES')
                 if athletes_tag is None: continue
                 for athlete_tag in athletes_tag.findall('ATHLETE'):
@@ -325,4 +325,3 @@ class LenexImporter(QObject):
         except Exception as e:
              self.log_message.emit(f"Erro inesperado durante inserção final para '{os.path.basename(xml_file_path)}': {e}")
              import traceback; self.log_message.emit(traceback.format_exc()); conn.rollback(); return False
-

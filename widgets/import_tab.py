@@ -2,7 +2,8 @@
 import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QListWidget, QPlainTextEdit, QProgressBar,
-                               QFileDialog, QMessageBox, QLabel)
+                               QFileDialog, QMessageBox, QLabel,
+                               QLineEdit, QSpacerItem, QSizePolicy) # Adicionado QLineEdit, QSpacerItem, QSizePolicy
 from PySide6.QtCore import QThread, Signal, Slot # Importa QThread e Slot
 
 # Importa a classe do importador
@@ -12,16 +13,34 @@ class ImportTab(QWidget):
     # Sinal para indicar sucesso na importação (para atualizar outras abas)
     import_success = Signal()
 
-    def __init__(self, db_path, target_club, parent=None):
+    def __init__(self, db_path, default_target_club="Fundação De Esportes De Campo Mourão", parent=None):
         super().__init__(parent)
         self.db_path = db_path
-        self.target_club = target_club
+        self.default_target_club = default_target_club
         self.selected_files = []
         self.importer_thread = None
         self.importer = None
 
         # --- Layout Principal ---
         layout = QVBoxLayout(self)
+
+        # --- Configuração do Clube Alvo ---
+        club_config_layout = QHBoxLayout()
+        club_config_layout.addWidget(QLabel("<b>Nome do Clube Alvo (exato como no LENEX):</b>"))
+        self.edit_target_club = QLineEdit(self.default_target_club)
+        self.edit_target_club.setPlaceholderText("Nome do clube como no arquivo LENEX")
+        club_config_layout.addWidget(self.edit_target_club, 1) # Stretch factor 1
+        layout.addLayout(club_config_layout)
+
+        club_hint_label = QLabel(
+            "<i>Dica: Para encontrar o nome exato, abra um arquivo LENEX (.lef ou .lxf) em um editor de texto "
+            "e procure pela tag &lt;CLUB ... name=\"NOME DO SEU CLUBE\" ...&gt;. Use o valor do atributo 'name'.</i>"
+        )
+        club_hint_label.setWordWrap(True)
+        club_hint_label.setStyleSheet("font-size: 9pt; color: grey;")
+        layout.addWidget(club_hint_label)
+        layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+
 
         # --- Seleção de Arquivos ---
         select_layout = QHBoxLayout()
@@ -103,9 +122,15 @@ class ImportTab(QWidget):
         self.progress_bar.setVisible(True)
         self.log_output.clear() # Limpa log para a nova importação
 
+        # Pega o nome do clube do QLineEdit
+        current_target_club = self.edit_target_club.text().strip()
+        if not current_target_club:
+            QMessageBox.warning(self, "Clube Alvo Vazio", "Por favor, insira o nome do clube alvo.")
+            self._reset_import_controls(); return
+
         # --- Configuração da Thread ---
         self.importer_thread = QThread(self) # Cria a thread (pai é a aba)
-        self.importer = LenexImporter(self.db_path, self.target_club) # Cria o worker
+        self.importer = LenexImporter(self.db_path, current_target_club) # Passa o nome do clube atual
         self.importer.set_files(self.selected_files) # Passa os arquivos para o worker
 
         self.importer.moveToThread(self.importer_thread) # Move o worker para a thread
@@ -125,6 +150,12 @@ class ImportTab(QWidget):
 
         # --- Iniciar a Thread ---
         self.importer_thread.start()
+
+    def _reset_import_controls(self):
+        """Reabilita os controles após uma falha de validação antes de iniciar a thread."""
+        self.select_button.setEnabled(True)
+        self.start_button.setEnabled(len(self.selected_files) > 0)
+        self.progress_bar.setVisible(False)
 
     @Slot(int) # Recebe o valor do progresso (0-100)
     def update_progress(self, value):

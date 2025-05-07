@@ -26,7 +26,7 @@ from widgets.about_tab import AboutTab # <<< ADICIONAR
 APP_DIR = parent_dir
 DB_DIR = os.path.join(APP_DIR, 'data')
 DB_PATH = os.path.join(DB_DIR, 'nadosapp.db') # Nome padrão do banco
-TARGET_CLUB = "Fundação De Esportes De Campo Mourão" # Defina o nome exato do seu clube alvo
+# TARGET_CLUB = "Fundação De Esportes De Campo Mourão" # Defina o nome exato do seu clube alvo
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -60,7 +60,8 @@ class MainWindow(QMainWindow):
 
         # --- Criação das Abas ---
         # 1. Aba de Importação
-        self.import_tab = ImportTab(DB_PATH, TARGET_CLUB)
+        # Passa o valor padrão, mas o usuário pode alterar na UI
+        self.import_tab = ImportTab(DB_PATH, default_target_club="Fundação De Esportes De Campo Mourão")
         self.tabs.addTab(self.import_tab, "Importar Dados")
 
         # 5. NOVA Aba de Edição de Competições
