@@ -69,10 +69,15 @@ class EditMeetTab(QWidget):
         edit_layout.addWidget(lbl_date, 4, 0)
         edit_layout.addWidget(self.edit_date, 4, 1)
         edit_layout.addWidget(lbl_course, 4, 2)
-        edit_layout.addWidget(self.combo_course, 4, 3)
+        edit_layout.addWidget(self.combo_course, 4, 3) # Linha 4, Coluna 3
+
+        # Legenda para o tipo de piscina
+        lbl_course_legend = QLabel("SCM: Piscina Curta (25m)\nLCM: Piscina Longa (50m)")
+        lbl_course_legend.setStyleSheet("font-size: 9pt; color: grey;") # Estilo menor e cinza
+        edit_layout.addWidget(lbl_course_legend, 5, 2, 1, 2) # Linha 5, Colunas 2 e 3
 
         # Espaçador e Botão Salvar
-        edit_layout.addItem(QSpacerItem(20, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding), 5, 0)
+        edit_layout.addItem(QSpacerItem(20, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding), 6, 0) # Movido para linha 6
         edit_layout.addWidget(self.btn_save, 6, 0, 1, 4)
 
         # Adicionar grupo ao layout principal
@@ -234,4 +239,3 @@ class EditMeetTab(QWidget):
         else:
              self._clear_fields()
              self.btn_save.setEnabled(False)
-

@@ -135,47 +135,14 @@ class MeetSummaryTab(QWidget):
     def __init__(self, db_path, parent=None):
         super().__init__(parent)
         self.db_path = db_path; self.current_meet_id = None; self.last_summary_data = None; self.last_meet_name = ""
-        self.main_layout = QVBoxLayout(self); top_bar_layout = QHBoxLayout(); select_layout = QHBoxLayout()
+        self.main_layout = QVBoxLayout(self); 
+        
+        # --- Layout de Seleção da Competição (no topo) ---
+        select_layout = QHBoxLayout()
         select_layout.addWidget(QLabel("Selecionar Competição:")); self.combo_select_meet = QComboBox()
         self.combo_select_meet.addItem(SELECT_PROMPT, userData=None); self.combo_select_meet.currentIndexChanged.connect(self._on_meet_selected)
-        select_layout.addWidget(self.combo_select_meet, 1); self.btn_export_pdf = QPushButton("Exportar para PDF")
-        self.btn_export_pdf.clicked.connect(self._export_to_pdf); self.btn_export_pdf.setEnabled(False); self.btn_export_pdf.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding) # Ocupa altura
-
-        # Botão Exportar CSV
-        self.btn_export_csv = QPushButton("Exportar Tabela para CSV")
-        self.btn_export_csv.clicked.connect(self._export_table_to_csv); self.btn_export_csv.setEnabled(False); self.btn_export_csv.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
-
-
-        # Layout para opções de exportação PDF
-        pdf_options_layout = QVBoxLayout()
-        pdf_options_layout.addWidget(QLabel("Opções PDF:"))
-        self.check_pdf_bar = QCheckBox("Incluir Gráfico Barras")
-        self.check_pdf_bar.setChecked(True) # Padrão: Habilitado
-        self.check_pdf_scatter = QCheckBox("Incluir Gráfico Dispersão")
-        self.check_pdf_scatter.setChecked(True) # Padrão: Habilitado
-        self.check_pdf_ai = QCheckBox("Incluir Análise IA")
-        self.check_pdf_ai.setChecked(False) # Padrão: Desabilitado
-        if not OPENAI_AVAILABLE: # Desabilita se IA não estiver disponível
-            self.check_pdf_ai.setEnabled(False)
-            self.check_pdf_ai.setToolTip("Biblioteca OpenAI não encontrada.")
-        pdf_options_layout.addWidget(self.check_pdf_bar)
-        pdf_options_layout.addWidget(self.check_pdf_scatter)
-        pdf_options_layout.addWidget(self.check_pdf_ai)
-        pdf_options_layout.addStretch()
-        
-        if not REPORTLAB_AVAILABLE or not MATPLOTLIB_AVAILABLE: # Desabilita exportação se faltar algo
-             self.btn_export_pdf.setEnabled(False)
-             tooltip = []
-             if not REPORTLAB_AVAILABLE: tooltip.append("'reportlab' não encontrada.")
-             if not MATPLOTLIB_AVAILABLE: tooltip.append("'matplotlib' não encontrado.")
-             self.btn_export_pdf.setToolTip("\n".join(tooltip))
-
-        # Adiciona botões de exportação
-        top_bar_layout.addLayout(select_layout, 4); 
-        top_bar_layout.addWidget(self.btn_export_csv, 1); top_bar_layout.addWidget(self.btn_export_pdf, 1); 
-        # Adiciona opções PDF ao lado do botão exportar
-        top_bar_layout.addLayout(pdf_options_layout, 1)
-        self.main_layout.addLayout(top_bar_layout)
+        select_layout.addWidget(self.combo_select_meet, 1)
+        self.main_layout.addLayout(select_layout)
 
         summary_grid = QGridLayout(); summary_grid.setContentsMargins(10, 10, 10, 10); summary_grid.setSpacing(15)
         summary_grid.addWidget(QLabel("<b>Medalhas Totais (Clube):</b>"), 0, 0, Qt.AlignmentFlag.AlignTop)
@@ -295,6 +262,47 @@ class MeetSummaryTab(QWidget):
         scroll_area.setWidget(scroll_content_widget) # Define o widget com todo o conteúdo
 
         self.main_layout.addWidget(scroll_area, 1) # Adiciona a área de scroll ao layout principal (stretch factor 1)
+
+         # --- Layout Inferior para Opções PDF e Botões de Exportação ---
+        bottom_controls_layout = QHBoxLayout()
+
+        # Layout para opções de exportação PDF (similar a athlete_report_tab)
+        pdf_options_group_layout = QVBoxLayout()
+        pdf_options_group_layout.addWidget(QLabel("<b>Incluir no PDF:</b>")) # Título similar
+        self.check_pdf_bar = QCheckBox("Incluir Gráfico Barras")
+        self.check_pdf_bar.setChecked(True)
+        self.check_pdf_scatter = QCheckBox("Incluir Gráfico Dispersão")
+        self.check_pdf_scatter.setChecked(True)
+        self.check_pdf_ai = QCheckBox("Incluir Análise IA")
+        self.check_pdf_ai.setChecked(False)
+        if not OPENAI_AVAILABLE:
+            self.check_pdf_ai.setEnabled(False)
+            self.check_pdf_ai.setToolTip("Biblioteca OpenAI não encontrada.")
+        # Desabilita checkboxes se Matplotlib não estiver disponível
+        if not MATPLOTLIB_AVAILABLE:
+            self.check_pdf_bar.setEnabled(False); self.check_pdf_bar.setToolTip("Matplotlib não encontrado.")
+            self.check_pdf_scatter.setEnabled(False); self.check_pdf_scatter.setToolTip("Matplotlib não encontrado.")
+
+        pdf_options_group_layout.addWidget(self.check_pdf_bar)
+        pdf_options_group_layout.addWidget(self.check_pdf_scatter)
+        pdf_options_group_layout.addWidget(self.check_pdf_ai)
+        pdf_options_group_layout.addStretch() # Empurra checkboxes para cima dentro do grupo
+
+        bottom_controls_layout.addLayout(pdf_options_group_layout) # Adiciona grupo de opções
+        bottom_controls_layout.addStretch(1) # Espaço
+
+        # Botão Exportar CSV
+        self.btn_export_csv = QPushButton("Exportar Tabela para CSV")
+        self.btn_export_csv.clicked.connect(self._export_table_to_csv); self.btn_export_csv.setEnabled(False)
+        bottom_controls_layout.addWidget(self.btn_export_csv)
+
+        # Botão Exportar PDF
+        self.btn_export_pdf = QPushButton("Exportar para PDF")
+        self.btn_export_pdf.clicked.connect(self._export_to_pdf); self.btn_export_pdf.setEnabled(False)
+        if not REPORTLAB_AVAILABLE or not MATPLOTLIB_AVAILABLE: self.btn_export_pdf.setEnabled(False); self.btn_export_pdf.setToolTip("ReportLab e/ou Matplotlib não encontrados.")
+        bottom_controls_layout.addWidget(self.btn_export_pdf)
+
+        self.main_layout.addLayout(bottom_controls_layout) # Adiciona controles inferiores ao layout principal
 
 
     def _populate_meet_combo(self):
