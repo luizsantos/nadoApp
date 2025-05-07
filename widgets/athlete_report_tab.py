@@ -353,13 +353,12 @@ class AthleteReportTab(QWidget):
 
         # Botão para Análise com IA (Gemini)
         self.btn_analyze_boxplot_ai = QPushButton("Analisar Boxplot com IA")
-        self.btn_analyze_boxplot_ai.setEnabled(False) # <<< Mantém desabilitado
+        self.btn_analyze_boxplot_ai.setEnabled(False) # Desabilitado explicitamente
         self.btn_analyze_boxplot_ai.clicked.connect(self._analyze_boxplot_with_ai)
-        # Adiciona tooltip indicando que está desativado
-        self.btn_analyze_boxplot_ai.setToolTip("Funcionalidade de análise com IA temporariamente desativada.")
-        # if not GOOGLE_GENERATIVEAI_AVAILABLE: # Comentado - botão sempre desabilitado
-        #     self.btn_analyze_boxplot_ai.setEnabled(False)
-        #     self.btn_analyze_boxplot_ai.setToolTip("Bibliotecas 'google-generativeai' e/ou 'Pillow' não encontradas.")
+        self.btn_analyze_boxplot_ai.setToolTip("Funcionalidade de análise com IA temporariamente desativada.") # Adiciona tooltip
+        if not GOOGLE_GENERATIVEAI_AVAILABLE: # Reativado - Desabilita se a lib não for encontrada na inicialização
+            self.btn_analyze_boxplot_ai.setEnabled(False)
+            self.btn_analyze_boxplot_ai.setToolTip("Bibliotecas 'google-generativeai' e/ou 'Pillow' não encontradas ou funcionalidade desativada.")
         boxplot_controls_layout.addWidget(self.btn_analyze_boxplot_ai)
 
 
@@ -627,8 +626,8 @@ class AthleteReportTab(QWidget):
         self.combo_boxplot_pool.setEnabled(boxplot_possible)
         self.check_boxplot_normalize.setEnabled(boxplot_possible)
         self.btn_generate_heatmap.setEnabled(heatmap_possible)
-        # Habilita botão de análise IA se libs e dados ok - <<< REMOVIDO/COMENTADO
-        # self.btn_analyze_boxplot_ai.setEnabled(boxplot_possible and GOOGLE_GENERATIVEAI_AVAILABLE)
+        # Habilita botão de análise IA se libs e dados ok - <<< REATIVADO
+        # self.btn_analyze_boxplot_ai.setEnabled(boxplot_possible and GOOGLE_GENERATIVEAI_AVAILABLE) # <<< REMOVIDO - Botão desabilitado permanentemente
         self.btn_generate_boxplot.setEnabled(boxplot_possible) # <<< ADICIONAR ESTA LINHA
         self.btn_generate_report.setEnabled(bool(self.current_athlete_data) and REPORTLAB_AVAILABLE and MATPLOTLIB_AVAILABLE)
 
@@ -1007,7 +1006,7 @@ Forneça uma análise concisa (2-3 parágrafos) sobre:
              QMessageBox.information(self, "Análise IA (Gemini)", analysis_text)
         # Reabilita o botão
         self.btn_analyze_boxplot_ai.setText("Analisar Boxplot com IA")
-        self.btn_analyze_boxplot_ai.setEnabled(True)
+        # self.btn_analyze_boxplot_ai.setEnabled(True) # <<< REMOVIDO - Não reabilitar
 
     # --- Métodos Auxiliares PDF (copiados/adaptados) ---
     # _generate_sparkline_pixmap (para UI)

@@ -18,6 +18,9 @@ from widgets.analysis_tab import AnalysisTab
 from widgets.edit_meet_tab import EditMeetTab 
 from widgets.meet_summary_tab import MeetSummaryTab
 from widgets.athlete_report_tab import AthleteReportTab
+from widgets.stroke_report_tab import StrokeReportTab # <<< ADICIONAR
+from widgets.about_tab import AboutTab # <<< ADICIONAR
+
 
 # --- Configurações ---
 APP_DIR = parent_dir
@@ -60,6 +63,10 @@ class MainWindow(QMainWindow):
         self.import_tab = ImportTab(DB_PATH, TARGET_CLUB)
         self.tabs.addTab(self.import_tab, "Importar Dados")
 
+        # 5. NOVA Aba de Edição de Competições
+        self.edit_meet_tab = EditMeetTab(DB_PATH)
+        self.tabs.addTab(self.edit_meet_tab, "Editar Dados") # <<< Adiciona a nova aba
+
         # 2. Aba de Visualização/Filtro Simples (ViewDataTab)
         self.view_data_tab = ViewDataTab(DB_PATH)
         self.tabs.addTab(self.view_data_tab, "Visualizar Dados")
@@ -70,19 +77,23 @@ class MainWindow(QMainWindow):
 
         # <<< NOVA Aba de Resumo da Competição >>>
         self.meet_summary_tab = MeetSummaryTab(DB_PATH)
-        self.tabs.addTab(self.meet_summary_tab, "Resumo Competição")
+        self.tabs.addTab(self.meet_summary_tab, "Análise de Competição")
 
+        self.athlete_report_tab = AthleteReportTab(DB_PATH)
+        self.tabs.addTab(self.athlete_report_tab, "Análise de Atleta")
+
+        # --- Aba Relatório por Estilo ---
+        self.stroke_report_tab = StrokeReportTab(DB_PATH) # <<< ADICIONAR
+        self.tabs.addTab(self.stroke_report_tab, "Aálise de Estilo") # <<< CORRIGIDO de tab_widget para tabs
 
         # 4. Aba de Análise (AnalysisTab)
         self.analysis_tab = AnalysisTab(DB_PATH)
-        self.tabs.addTab(self.analysis_tab, "Análise")
+        self.tabs.addTab(self.analysis_tab, "Gráficos")
 
-        self.athlete_report_tab = AthleteReportTab(DB_PATH)
-        self.tabs.addTab(self.athlete_report_tab, "Relatório Atleta")
 
-        # 5. NOVA Aba de Edição de Competições
-        self.edit_meet_tab = EditMeetTab(DB_PATH)
-        self.tabs.addTab(self.edit_meet_tab, "Editar Competições") # <<< Adiciona a nova aba
+        # --- Aba Sobre ---
+        self.about_tab = AboutTab() # <<< ADICIONAR
+        self.tabs.addTab(self.about_tab, "Sobre") # <<< ADICIONAR
 
         # --- Conectar Sinais ---
         # Conecta o sinal de sucesso da importação aos slots de refresh das outras abas
@@ -92,6 +103,7 @@ class MainWindow(QMainWindow):
         self.import_tab.import_success.connect(self.edit_meet_tab.refresh_data)
         self.import_tab.import_success.connect(self.meet_summary_tab.refresh_data)
         self.import_tab.import_success.connect(self.athlete_report_tab.refresh_data) # <<< Conecta o sinal
+        self.import_tab.import_success.connect(self.stroke_report_tab.refresh_data) # <<< CORRIGIDO - Conectar ao sinal import_success
 
 
     # Opcional: Método closeEvent para garantir fechamento limpo
