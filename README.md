@@ -32,7 +32,7 @@ A interface do NadosApp é organizada em abas, cada uma com uma funcionalidade e
     *   Botão para iniciar o processo de importação.
     *   Barra de progresso e área de log para acompanhar o status da importação.
 
-![Texto alternativo](img/import.png)
+![Importação de dados LENEX](img/import.png)
 
 ### 2. Editar Dados das Competições
 *   **Função:** Permite visualizar e modificar os detalhes das competições importadas.
@@ -42,7 +42,7 @@ A interface do NadosApp é organizada em abas, cada uma com uma funcionalidade e
     *   Legenda explicativa para os tipos de piscina (SCM: 25m, LCM: 50m).
     *   Botão para salvar as alterações.
 
-![Texto alternativo](img/editarDados.png)
+![Editar dados das competições](img/editarDados.png)
 
 ### 3. Visualizar Dados
 *   **Função:** Permite ao usuário visualizar e consultar os dados brutos armazenados no banco de dados.
@@ -51,7 +51,7 @@ A interface do NadosApp é organizada em abas, cada uma com uma funcionalidade e
     *   Exibição dos dados da tabela selecionada em formato tabular.
     *   Opções de filtro e ordenação.
 
-![Texto alternativo](img/visualizarDados.png)
+![Visualizar dados](img/visualizarDados.png)
 
 ### 4. Análise de Competição
 *   **Função:** Gera um relatório resumido de uma competição específica.
@@ -64,7 +64,7 @@ A interface do NadosApp é organizada em abas, cada uma com uma funcionalidade e
     *   Opções para incluir gráficos de barras (ex: medalhas por clube) e gráficos de dispersão (ex: idade dos atletas vs. tempo) no PDF.
     *   Botões para exportar os dados da tabela para CSV e o relatório completo para PDF.
 
-![Texto alternativo](img/analiseCompeticao.png)
+![Análise de dados de competições](img/analiseCompeticao.png)
 
 
 ### 5. Análise Atleta
@@ -79,7 +79,7 @@ A interface do NadosApp é organizada em abas, cada uma com uma funcionalidade e
         *   Análise de ritmo (se disponível).
     *   Botões para exportar os dados da tabela para CSV e o relatório completo para PDF.
 
-![Texto alternativo](img/analiseAtleta.png)
+![Análise de dados dos Atletas](img/analiseAtleta.png)
 
 ### 6. Análise Estilo
 *   **Função:** Permite uma análise focada em um estilo de nado específico (Livre, Costas, Peito, Borboleta, Medley).
@@ -95,7 +95,7 @@ A interface do NadosApp é organizada em abas, cada uma com uma funcionalidade e
     *   O PDF também inclui uma tabela final com o ranking da volta mais rápida para o estilo como um todo.
     *   Botões para gerar gráficos pop-up interativos (evolução, top atletas, densidade) e para exportar o relatório completo para PDF.
 
-![Texto alternativo](img/analiseEstilo.png)
+![Análise de estilos de nado](img/analiseEstilo.png)
 
 ### 7. Sobre
 *   **Função:** Apresenta informações sobre o NadosApp.
@@ -106,8 +106,10 @@ A interface do NadosApp é organizada em abas, cada uma com uma funcionalidade e
 
 ## Exemplos de PDF gerados pelo software:
 
+Segue alguns exemplos de relatórios em PDF que podem ser gerados pelo programa:
+
 * [Análise de atleta](img/Relatorio_Samuel_Massuda_Santos_Todos.pdf)
-* [Análise de Competição](img/Resumo_Torneio Regional da 2ª Região.pdf)
+* [Análise de Competição](img/Resumo_Torneio Regional_2_Regiao.pdf)
 
 ## Licença
 
