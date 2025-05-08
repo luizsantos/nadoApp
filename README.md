@@ -109,7 +109,6 @@ A interface do NadosApp é organizada em abas, cada uma com uma funcionalidade e
 Segue alguns exemplos de relatórios em PDF que podem ser gerados pelo programa:
 
 * [Análise de atleta](img/Relatorio_Samuel_Massuda_Santos_Todos.pdf)
-* [Análise de Competição](img/Resumo_Torneio Regional_2_Regiao.pdf)
 
 ## Licença
 
@@ -127,3 +126,5 @@ Este programa é um software livre e é distribuído sob os termos da [Licença 
 * A análise de dados por IA integrada ao programa ainda não foi concluída; sua implementação está prevista para versões futuras.
 
 * Este software está atualmente em fase de testes e desenvolvimento. Assim, seu uso é de inteira responsabilidade do usuário.
+
+* The English version of this text is available here: [README-eng](README-eng.md)
