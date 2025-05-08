@@ -1442,7 +1442,8 @@ Forneça uma análise concisa (2-3 parágrafos) sobre:
                 # Usa a seleção de piscina da UI do heatmap
                 selected_pool_text_hm = self.combo_heatmap_pool.currentText()
                 pool_filter_hm = '25 metros (Piscina Curta)' if 'Curta' in selected_pool_text_hm else '50 metros (Piscina Longa)'
-                heatmap_buffer = self._generate_pdf_heatmap(pool_filter_hm)
+                # Passa os dados do atleta (pdf_data) e o filtro de piscina
+                heatmap_buffer = self._generate_pdf_heatmap(pdf_data, pool_filter_hm) # <<< CORRIGIDO: Adicionado pdf_data
                 if heatmap_buffer:
                     try:
                         img_heatmap = Image(heatmap_buffer, width=img_width_pdf, height=img_width_pdf * (4.5/7.0)) # Ajustar altura se necessário
@@ -1460,7 +1461,8 @@ Forneça uma análise concisa (2-3 parágrafos) sobre:
                 selected_pool_text_bp = self.combo_boxplot_pool.currentText()
                 pool_filter_bp = '25 metros (Piscina Curta)' if 'Curta' in selected_pool_text_bp else '50 metros (Piscina Longa)'
                 normalize_bp = self.check_boxplot_normalize.isChecked()
-                boxplot_buffer = self._generate_pdf_boxplot(pool_filter_bp, normalize_bp)
+                # Passa os dados do atleta (pdf_data), filtro de piscina e normalização
+                boxplot_buffer = self._generate_pdf_boxplot(pdf_data, pool_filter_bp, normalize_bp) # <<< CORRIGIDO: Adicionado pdf_data
                 if boxplot_buffer:
                     try: img_boxplot = Image(boxplot_buffer, width=img_width_pdf, height=img_width_pdf * (4.5/7.0)); img_boxplot.hAlign = 'CENTER'; story.append(img_boxplot)
                     except Exception as img_err: print(f"Erro add img boxplot: {img_err}"); story.append(Paragraph(f"(Erro gráfico boxplot)", normal_style))

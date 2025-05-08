@@ -85,7 +85,7 @@ class MainWindow(QMainWindow):
 
         # --- Aba Relatório por Estilo ---
         self.stroke_report_tab = StrokeReportTab(DB_PATH) # <<< ADICIONAR
-        self.tabs.addTab(self.stroke_report_tab, "Aálise de Estilo") # <<< CORRIGIDO de tab_widget para tabs
+        self.tabs.addTab(self.stroke_report_tab, "Análise de Estilo") # <<< CORRIGIDO de tab_widget para tabs
 
         # 4. Aba de Análise (AnalysisTab)
         self.analysis_tab = AnalysisTab(DB_PATH)
